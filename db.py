@@ -52,6 +52,10 @@ def init_db():
             conn.execute(
                 "ALTER TABLE user_profile ADD COLUMN share_code TEXT NOT NULL DEFAULT ''"
             )
+        if "email" not in cols:
+            conn.execute(
+                "ALTER TABLE user_profile ADD COLUMN email TEXT NOT NULL DEFAULT ''"
+            )
         # Migrate symptoms: add user_id column
         symp_cols = [row[1] for row in conn.execute("PRAGMA table_info(symptoms)")]
         if "user_id" not in symp_cols:
@@ -74,6 +78,14 @@ def init_db():
                 physician_id INTEGER NOT NULL REFERENCES physicians(id),
                 patient_id   INTEGER NOT NULL REFERENCES user_profile(id),
                 PRIMARY KEY (physician_id, patient_id)
+            )
+        """)
+        # Password reset tokens
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                token      TEXT    PRIMARY KEY,
+                user_id    INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
             )
         """)
         # Generate share codes for any patient rows missing one

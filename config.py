@@ -19,7 +19,8 @@ _physician_ctx:   ContextVar[Optional[str]] = ContextVar("_physician_ctx",   def
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-PUBLIC_PATHS = {"/login", "/signup", "/logout"}
+PUBLIC_PATHS = {"/", "/login", "/signup", "/logout", "/forgot-password", "/reset-password"}
+RESET_TOKEN_TTL_SECONDS = 3600  # 1 hour
 
 
 def _load_secret_key() -> str:

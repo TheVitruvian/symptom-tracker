@@ -59,12 +59,13 @@ def api_profile_update(
     dob: str = Form(""),
     conditions: str = Form(""),
     medications: str = Form(""),
+    email: str = Form(""),
 ):
     uid = _current_user_id.get()
     with get_db() as conn:
         conn.execute(
-            "UPDATE user_profile SET name=?, dob=?, conditions=?, medications=? WHERE id=?",
-            (name.strip(), dob, conditions.strip(), medications.strip(), uid),
+            "UPDATE user_profile SET name=?, dob=?, conditions=?, medications=?, email=? WHERE id=?",
+            (name.strip(), dob, conditions.strip(), medications.strip(), email.strip().lower(), uid),
         )
         conn.commit()
     return JSONResponse({"status": "ok"})
@@ -75,7 +76,7 @@ def profile_get(saved: int = 0, error: str = ""):
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute("SELECT * FROM user_profile WHERE id = ?", (uid,)).fetchone()
-    p = dict(row) if row else {"name": "", "dob": "", "conditions": "", "medications": "", "photo_ext": "", "share_code": ""}
+    p = dict(row) if row else {"name": "", "dob": "", "conditions": "", "medications": "", "photo_ext": "", "share_code": "", "email": ""}
     age = _calc_age(p["dob"])
     age_str = f" &nbsp;<span style='color:#666;font-size:13px;'>({age} years old)</span>" if age is not None else ""
     if saved:
@@ -149,6 +150,11 @@ def profile_get(saved: int = 0, error: str = ""):
         <input type="date" id="dob" name="dob" value="{html.escape(p['dob'])}">
       </div>
       <div class="form-group">
+        <label for="email">Email <span style="color:#aaa;font-weight:400">(used for password reset)</span></label>
+        <input type="email" id="email" name="email" value="{html.escape(p.get('email', ''))}"
+          placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="form-group">
         <label for="conditions">Known Conditions</label>
         <textarea id="conditions" name="conditions" rows="3"
           placeholder="e.g. migraines, asthma">{html.escape(p['conditions'])}</textarea>
@@ -200,6 +206,7 @@ def profile_update(
     dob: str = Form(""),
     conditions: str = Form(""),
     medications: str = Form(""),
+    email: str = Form(""),
 ):
     if dob:
         try:
@@ -209,8 +216,8 @@ def profile_update(
     uid = _current_user_id.get()
     with get_db() as conn:
         conn.execute(
-            "UPDATE user_profile SET name=?, dob=?, conditions=?, medications=? WHERE id=?",
-            (name.strip(), dob, conditions.strip(), medications.strip(), uid),
+            "UPDATE user_profile SET name=?, dob=?, conditions=?, medications=?, email=? WHERE id=?",
+            (name.strip(), dob, conditions.strip(), medications.strip(), email.strip().lower(), uid),
         )
         conn.commit()
     return RedirectResponse(url="/profile?saved=1", status_code=303)

@@ -1,5 +1,8 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from config import PUBLIC_PATHS, PHYSICIAN_CTX_COOKIE, _current_user_id, _physician_ctx, UPLOAD_DIR
 from db import init_db, get_db
@@ -83,9 +86,61 @@ async def auth_middleware(request: Request, call_next):
     return _ensure_csrf_cookie(request, await call_next(request))
 
 
-@app.get("/")
-def root():
-    return RedirectResponse(url="/symptoms/calendar", status_code=303)
+@app.get("/", response_class=HTMLResponse)
+def root(request: Request):
+    if _get_authenticated_physician(request):
+        return RedirectResponse(url="/physician", status_code=303)
+    if _get_authenticated_user(request):
+        return RedirectResponse(url="/symptoms/calendar", status_code=303)
+    return """<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Symptom Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f0f4ff; min-height: 100vh;
+           display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .hero { text-align: center; max-width: 480px; width: 100%; }
+    .logo { font-size: 48px; margin-bottom: 16px; }
+    h1 { font-size: 32px; font-weight: 800; color: #1e3a8a; margin-bottom: 8px; }
+    .subtitle { font-size: 16px; color: #6b7280; margin-bottom: 40px; line-height: 1.5; }
+    .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+            padding: 28px 20px; text-decoration: none; color: inherit;
+            transition: box-shadow .15s, transform .15s; display: block; }
+    .card:hover { box-shadow: 0 8px 24px rgba(0,0,0,.10); transform: translateY(-2px); }
+    .card-icon { font-size: 32px; margin-bottom: 12px; }
+    .card-title { font-size: 17px; font-weight: 700; color: #111; margin-bottom: 6px; }
+    .card-desc { font-size: 13px; color: #6b7280; line-height: 1.5; }
+    .card.patient { border-top: 4px solid #3b82f6; }
+    .card.physician { border-top: 4px solid #7c3aed; }
+    @media (max-width: 420px) { .cards { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <div class="logo">&#128203;</div>
+    <h1>Symptom Tracker</h1>
+    <p class="subtitle">Log symptoms and medications, spot patterns over time,
+      and share data with your care team.</p>
+    <div class="cards">
+      <a href="/login" class="card patient">
+        <div class="card-icon">&#129730;</div>
+        <div class="card-title">I'm a Patient</div>
+        <div class="card-desc">Log in to track your symptoms and medications.</div>
+      </a>
+      <a href="/physician/login" class="card physician">
+        <div class="card-icon">&#128104;&#8205;&#9877;&#65039;</div>
+        <div class="card-title">I'm a Physician</div>
+        <div class="card-desc">Log in to view and manage your patients' data.</div>
+      </a>
+    </div>
+  </div>
+</body>
+</html>
+"""
 
 
 app.include_router(auth.router)

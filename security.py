@@ -1,6 +1,9 @@
 import hashlib
 import hmac
+import os
 import secrets
+import smtplib
+from email.mime.text import MIMEText
 from time import time
 from typing import Optional
 
@@ -167,6 +170,33 @@ def _set_physician_cookie(response, request: Request, username: str, password_ha
         max_age=SESSION_TTL_SECONDS,
     )
     return response
+
+
+def _send_reset_email(to_email: str, reset_url: str) -> bool:
+    """Send a password-reset email. Returns True on success, False if SMTP is not configured or fails."""
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASSWORD", "")
+    smtp_from = os.environ.get("SMTP_FROM", smtp_user)
+    if not smtp_host or not smtp_user:
+        return False
+    msg = MIMEText(
+        f"Click the link below to reset your Symptom Tracker password (expires in 1 hour):\n\n"
+        f"{reset_url}\n\n"
+        "If you did not request a password reset, you can ignore this email."
+    )
+    msg["Subject"] = "Reset your Symptom Tracker password"
+    msg["From"] = smtp_from
+    msg["To"] = to_email
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port) as s:
+            s.starttls()
+            s.login(smtp_user, smtp_pass)
+            s.sendmail(smtp_from, [to_email], msg.as_string())
+        return True
+    except Exception:
+        return False
 
 
 def _physician_owns_patient(physician_id: int, patient_id: int) -> bool:

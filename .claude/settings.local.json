@@ -5,7 +5,8 @@
       "Bash(source:*)",
       "Bash(python:*)",
       "Bash(timeout 5 uvicorn:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(pip install:*)"
     ]
   }
 }
