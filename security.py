@@ -1,0 +1,178 @@
+import hashlib
+import hmac
+import secrets
+from time import time
+from typing import Optional
+
+from fastapi import Request
+
+from config import (
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_SECONDS,
+    CSRF_COOKIE_NAME,
+    PHYSICIAN_COOKIE_NAME,
+    SECRET_KEY,
+)
+from db import get_db
+
+
+def _request_origin_host(request: Request) -> str:
+    header = request.headers.get("origin") or request.headers.get("referer") or ""
+    if not header:
+        return ""
+    try:
+        if "://" in header:
+            return header.split("://", 1)[1].split("/", 1)[0].lower()
+        return ""
+    except Exception:
+        return ""
+
+
+def _is_same_origin(request: Request) -> bool:
+    origin_host = _request_origin_host(request)
+    if not origin_host:
+        return False
+    return origin_host == request.url.netloc.lower()
+
+
+def _ensure_csrf_cookie(request: Request, response):
+    if request.cookies.get(CSRF_COOKIE_NAME):
+        return response
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        secrets.token_urlsafe(32),
+        httponly=False,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+    return response
+
+
+def _csrf_header_valid(request: Request) -> bool:
+    cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
+    header_token = request.headers.get("x-csrf-token", "")
+    return bool(cookie_token) and hmac.compare_digest(cookie_token, header_token)
+
+
+def _hash_password(plaintext: str) -> str:
+    salt = secrets.token_bytes(32)
+    dk = hashlib.pbkdf2_hmac("sha256", plaintext.encode(), salt, 480_000)
+    return salt.hex() + ":" + dk.hex()
+
+
+def _verify_password(plaintext: str, stored: str) -> bool:
+    try:
+        salt_hex, dk_hex = stored.split(":")
+        dk = hashlib.pbkdf2_hmac("sha256", plaintext.encode(), bytes.fromhex(salt_hex), 480_000)
+        return hmac.compare_digest(dk, bytes.fromhex(dk_hex))
+    except Exception:
+        return False
+
+
+def _make_session_token(username: str, password_hash: str) -> str:
+    exp = int(time()) + SESSION_TTL_SECONDS
+    nonce = secrets.token_urlsafe(16)
+    payload = f"{username}:{exp}:{nonce}"
+    sig = hmac.new(SECRET_KEY.encode(), f"{payload}:{password_hash}".encode(), "sha256").hexdigest()
+    return f"{payload}:{sig}"
+
+
+def _verify_session_token(token: str, username: str, password_hash: str) -> bool:
+    try:
+        token_username, exp_s, nonce, sig = token.split(":", 3)
+        if token_username != username:
+            return False
+        exp = int(exp_s)
+        if exp < int(time()):
+            return False
+        payload = f"{token_username}:{exp}:{nonce}"
+        expected = hmac.new(
+            SECRET_KEY.encode(),
+            f"{payload}:{password_hash}".encode(),
+            "sha256",
+        ).hexdigest()
+        return hmac.compare_digest(sig, expected)
+    except Exception:
+        return False
+
+
+def _set_session_cookie(response, request: Request, username: str, password_hash: str):
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        _make_session_token(username, password_hash),
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        max_age=SESSION_TTL_SECONDS,
+    )
+    return response
+
+
+def _get_authenticated_user(request: Request):
+    """Extract username from session token; look up user_profile by username. Returns Row or None."""
+    cookie = request.cookies.get(SESSION_COOKIE_NAME, "")
+    if not cookie:
+        return None
+    parts = cookie.split(":", 3)
+    if len(parts) < 4:
+        return None
+    token_username = parts[0]
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM user_profile WHERE username = ?", (token_username,)
+        ).fetchone()
+    if not row or not row["password_hash"]:
+        return None
+    if not _verify_session_token(cookie, token_username, row["password_hash"]):
+        return None
+    return row
+
+
+def _has_any_patient() -> bool:
+    """Return True if at least one patient account exists."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM user_profile WHERE password_hash != '' LIMIT 1"
+        ).fetchone()
+    return row is not None
+
+
+def _get_authenticated_physician(request: Request):
+    """Extract username from physician session cookie; look up in physicians table. Returns Row or None."""
+    cookie = request.cookies.get(PHYSICIAN_COOKIE_NAME, "")
+    if not cookie:
+        return None
+    parts = cookie.split(":", 3)
+    if len(parts) < 4:
+        return None
+    token_username = parts[0]
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM physicians WHERE username = ?", (token_username,)
+        ).fetchone()
+    if not row:
+        return None
+    if not _verify_session_token(cookie, token_username, row["password_hash"]):
+        return None
+    return row
+
+
+def _set_physician_cookie(response, request: Request, username: str, password_hash: str):
+    response.set_cookie(
+        PHYSICIAN_COOKIE_NAME,
+        _make_session_token(username, password_hash),
+        httponly=True,
+        samesite="lax",
+        secure=request.url.scheme == "https",
+        max_age=SESSION_TTL_SECONDS,
+    )
+    return response
+
+
+def _physician_owns_patient(physician_id: int, patient_id: int) -> bool:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM physician_patients WHERE physician_id = ? AND patient_id = ?",
+            (physician_id, patient_id),
+        ).fetchone()
+    return row is not None

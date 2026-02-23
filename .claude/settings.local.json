@@ -4,7 +4,8 @@
       "Bash(python3:*)",
       "Bash(source:*)",
       "Bash(python:*)",
-      "Bash(timeout 5 uvicorn:*)"
+      "Bash(timeout 5 uvicorn:*)",
+      "Bash(wc:*)"
     ]
   }
 }
