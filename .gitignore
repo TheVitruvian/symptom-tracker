@@ -1,0 +1,6 @@
+.app_secret_key
+symptoms.db
+uploads/
+__pycache__/
+.venv/
+*.pyc
