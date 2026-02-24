@@ -77,18 +77,45 @@ def api_med_symptom_correlations(from_date: str = "", to_date: str = ""):
 
 @router.get("/symptoms/chart", response_class=HTMLResponse)
 def symptoms_chart():
+    import html as _html
+    uid = _current_user_id.get()
+    with get_db() as conn:
+        _row = conn.execute("SELECT name FROM user_profile WHERE id=?", (uid,)).fetchone()
+    patient_name = _html.escape(_row["name"] if _row and _row["name"] else "")
     return f"""<!DOCTYPE html>
 <html>
 <head>
   {PAGE_STYLE}
   <title>Health Report</title>
+  <style>
+@media print {{
+  nav, .screen-only {{ display: none !important; }}
+  .print-only        {{ display: block !important; }}
+  body               {{ font-size: 11pt; }}
+  .container         {{ max-width: 100% !important; padding: 0 !important; }}
+  #chart-wrapper     {{ display: block !important; box-shadow: none !important;
+                       border: 1px solid #e5e7eb !important; }}
+  canvas             {{ max-width: 100% !important; }}
+  #corr-wrapper, #med-corr-wrapper, #insights-wrapper {{ display: block !important; }}
+  details            {{ display: block; }}
+  details > *        {{ display: block !important; }}
+  details summary    {{ display: none !important; }}
+  h3, h2             {{ page-break-after: avoid; }}
+}}
+  </style>
 </head>
 <body>
   {_nav_bar('chart')}
   <div class="container" style="max-width:860px;">
-    <h1>Health Report</h1>
+    <div class="print-only" style="display:none; border-bottom:2px solid #1e3a8a; padding-bottom:12px; margin-bottom:16px;">
+      <h2 style="margin:0 0 6px; font-size:18pt; color:#1e3a8a;">Health Report</h2>
+      <p style="margin:2px 0; font-size:11pt;"><strong>Patient:</strong> {patient_name}</p>
+      <p style="margin:2px 0; font-size:11pt;"><strong>Period:</strong> <span id="print-date-range"></span></p>
+      <p style="margin:2px 0; font-size:10pt; color:#6b7280;">Generated <span id="print-generated-date"></span></p>
+    </div>
+    <h1 class="screen-only">Health Report</h1>
 
-    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:12px;">
+    <div class="screen-only" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:12px;">
       <div style="display:flex; align-items:center; gap:6px;">
         <label for="range-from" style="font-size:13px; font-weight:600; color:#555;">From</label>
         <input type="date" id="range-from" onchange="render()"
@@ -106,6 +133,7 @@ def symptoms_chart():
         <button onclick="setPresetAll()" style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">All</button>
       </div>
       <button id="smooth-btn" onclick="toggleSmooth()" style="border:1px solid #1e3a8a; background:#1e3a8a; color:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">Smooth</button>
+      <button onclick="printReport()" style="border:1px solid #7c3aed; background:#7c3aed; color:#fff; border-radius:6px; padding:5px 12px; font-size:13px; cursor:pointer; font-family:inherit;">Print Report</button>
     </div>
 
     <div id="no-data" class="empty" style="display:none; margin-top:24px;">
@@ -119,6 +147,8 @@ def symptoms_chart():
     <div id="med-tooltip" style="display:none; position:fixed; background:#1e3a8a; color:#fff;
       padding:6px 10px; border-radius:6px; font-size:13px; pointer-events:none; z-index:100;
       white-space:nowrap; box-shadow:0 2px 8px rgba(0,0,0,0.2); line-height:1.5;"></div>
+
+    <div id="insights-wrapper" style="display:none; margin-top:24px;"></div>
 
     <div id="corr-wrapper" style="display:none; margin-top:28px;">
       <details>
@@ -153,6 +183,7 @@ def symptoms_chart():
         </div>
       </details>
     </div>
+    <div id="adherence-print-section" class="print-only" style="display:none; margin-top:24px;"></div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
@@ -254,6 +285,7 @@ def symptoms_chart():
       }}
 
       render();
+      renderAdherencePrint();
     }}
 
     function setPreset(days) {{
@@ -293,6 +325,53 @@ def symptoms_chart():
       }});
     }}
 
+    function renderAdherencePrint() {{
+      const el = document.getElementById("adherence-print-section");
+      const schedules = Object.values(_adherenceData);
+      if (!schedules.length) {{ el.innerHTML = ""; return; }}
+      const FREQ = {{"once_daily":"Once daily","twice_daily":"Twice daily","three_daily":"3\u00d7 daily","prn":"As needed (PRN)"}};
+      let rows = "";
+      for (const s of schedules) {{
+        const freq = FREQ[s.frequency] || s.frequency;
+        const adh = s.adherence_7d_pct !== null
+          ? Math.round(s.adherence_7d_pct) + "%"
+          : s.taken_7d + "\u00d7 this week";
+        rows += `<tr>
+          <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;">${{escHtml(s.name)}}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;">${{escHtml(s.dose || "\u2014")}}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;">${{freq}}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #e5e7eb;font-weight:600;">${{adh}}</td>
+        </tr>`;
+      }}
+      el.innerHTML = `
+        <h3 style="font-size:13pt;font-weight:700;margin:0 0 8px;color:#111;">
+          Medication Adherence \u2014 Past 7 Days
+        </h3>
+        <table style="width:100%;border-collapse:collapse;font-size:10pt;">
+          <thead><tr style="background:#f3f4f6;">
+            <th style="text-align:left;padding:6px 8px;border-bottom:2px solid #d1d5db;">Medication</th>
+            <th style="text-align:left;padding:6px 8px;border-bottom:2px solid #d1d5db;">Dose</th>
+            <th style="text-align:left;padding:6px 8px;border-bottom:2px solid #d1d5db;">Frequency</th>
+            <th style="text-align:left;padding:6px 8px;border-bottom:2px solid #d1d5db;">7-Day Adherence</th>
+          </tr></thead>
+          <tbody>${{rows}}</tbody>
+        </table>`;
+    }}
+
+    function printReport() {{
+      const from = document.getElementById("range-from").value;
+      const to   = document.getElementById("range-to").value;
+      document.getElementById("print-date-range").textContent =
+        (from ? fmtDate(from) : "\u2014") + " \u2013 " + (to ? fmtDate(to) : "\u2014");
+      document.getElementById("print-generated-date").textContent =
+        new Date().toLocaleDateString("en-US", {{year:"numeric",month:"long",day:"numeric"}});
+      const details = [...document.querySelectorAll("details")];
+      const wasOpen = details.map(d => d.open);
+      details.forEach(d => {{ d.open = true; }});
+      window.onafterprint = () => {{ details.forEach((d, i) => {{ d.open = wasOpen[i]; }}); }};
+      window.print();
+    }}
+
     function render() {{
       const from = document.getElementById("range-from").value;
       const to   = document.getElementById("range-to").value;
@@ -308,6 +387,7 @@ def symptoms_chart():
       renderChart(syms, meds);
       renderCorrelations(from, to);
       renderMedCorrelations(from, to);
+      renderInsights(from, to);
     }}
 
     function renderChart(symptoms, medications) {{
@@ -510,6 +590,80 @@ def symptoms_chart():
       }}
     }}
 
+    async function renderInsights(from, to) {{
+      const params = new URLSearchParams();
+      if (from) params.set("from_date", from);
+      if (to)   params.set("to_date", to);
+      const [sr, mr] = await Promise.all([
+        fetch(`/api/symptoms/correlations?${{params}}`),
+        fetch(`/api/correlations/med-symptom?${{params}}`),
+      ]);
+      const [sd, md] = await Promise.all([sr.json(), mr.json()]);
+
+      const insights = [];
+
+      // Symptom–symptom pairs (upper triangle only, avoid duplicates)
+      const {{ names, matrix: sm }} = sd;
+      const sympPairs = [];
+      for (let r = 0; r < names.length; r++) {{
+        for (let c = r + 1; c < names.length; c++) {{
+          const v = sm[r][c];
+          if (v !== null && Math.abs(v) >= 0.4) sympPairs.push({{ v, a: names[r], b: names[c] }});
+        }}
+      }}
+      sympPairs.sort((x, y) => Math.abs(y.v) - Math.abs(x.v));
+      for (const {{ v, a, b }} of sympPairs.slice(0, 2)) {{
+        const pos = v >= 0;
+        insights.push({{
+          color:  pos ? "#dc2626" : "#2563eb",
+          bg:     pos ? "#fef2f2" : "#eff6ff",
+          border: pos ? "#fca5a5" : "#bfdbfe",
+          text:   pos
+            ? `<strong>${{escHtml(a)}}</strong> and <strong>${{escHtml(b)}}</strong> tend to occur together`
+            : `<strong>${{escHtml(a)}}</strong> and <strong>${{escHtml(b)}}</strong> tend to alternate`,
+          sub: `Symptom pattern &middot; r = ${{v >= 0 ? "+" : ""}}${{v.toFixed(2)}}`,
+        }});
+      }}
+
+      // Medication–symptom pairs
+      const {{ med_names, symp_names, matrix: mm }} = md;
+      const medPairs = [];
+      for (let r = 0; r < med_names.length; r++) {{
+        for (let c = 0; c < symp_names.length; c++) {{
+          const v = mm[r][c];
+          if (v !== null && Math.abs(v) >= 0.4) medPairs.push({{ v, med: med_names[r], symp: symp_names[c] }});
+        }}
+      }}
+      medPairs.sort((x, y) => Math.abs(y.v) - Math.abs(x.v));
+      for (const {{ v, med, symp }} of medPairs.slice(0, 2)) {{
+        const pos = v >= 0;
+        insights.push({{
+          color:  pos ? "#b45309" : "#15803d",
+          bg:     pos ? "#fffbeb" : "#f0fdf4",
+          border: pos ? "#fde68a" : "#bbf7d0",
+          text:   pos
+            ? `<strong>${{escHtml(med)}}</strong> is taken more on worse <strong>${{escHtml(symp)}}</strong> days`
+            : `<strong>${{escHtml(med)}}</strong> is associated with better <strong>${{escHtml(symp)}}</strong> days`,
+          sub: `Medication pattern &middot; r = ${{v >= 0 ? "+" : ""}}${{v.toFixed(2)}}`,
+        }});
+      }}
+
+      const wrapper = document.getElementById("insights-wrapper");
+      if (!insights.length) {{ wrapper.style.display = "none"; return; }}
+      wrapper.style.display = "block";
+      let html = `<h2 style="font-size:15px;font-weight:700;color:#374151;margin:0 0 10px;">Key Patterns</h2>`;
+      html += `<div style="display:flex;flex-direction:column;gap:8px;">`;
+      for (const ins of insights) {{
+        html += `<div style="padding:10px 14px;background:${{ins.bg}};border:1px solid ${{ins.border}};`
+              + `border-left:4px solid ${{ins.color}};border-radius:8px;">`
+              + `<div style="font-size:14px;color:#111;line-height:1.5;">${{ins.text}}</div>`
+              + `<div style="font-size:11px;color:#6b7280;margin-top:3px;">${{ins.sub}}</div>`
+              + `</div>`;
+      }}
+      html += `</div>`;
+      wrapper.innerHTML = html;
+    }}
+
     async function renderCorrelations(from, to) {{
       const params = new URLSearchParams();
       if (from) params.set("from_date", from);
@@ -522,9 +676,9 @@ def symptoms_chart():
       corrWrapper.style.display = "block";
 
       const names = data.names, matrix = data.matrix;
-      const thStyle = `style="padding:8px 10px; font-size:13px; font-weight:600;
+      const thStyle = `style="padding:6px 8px; font-size:12px; font-weight:600;
         text-align:center; white-space:nowrap; background:#f5f5f5;"`;
-      const rowHeadStyle = `style="padding:8px 12px; font-size:13px; font-weight:600;
+      const rowHeadStyle = `style="padding:6px 10px; font-size:12px; font-weight:600;
         text-align:right; white-space:nowrap; background:#f5f5f5;"`;
 
       let html = `<table style="border-collapse:collapse; width:100%;">`;
@@ -538,11 +692,12 @@ def symptoms_chart():
           const {{ bg, text }} = corrColor(val);
           const isDiag = r === c;
           const label = isDiag ? "&mdash;" : describeR(val, false);
-          const title = isDiag || val === null ? "" : ` title="r = ${{val >= 0 ? "+" : ""}}${{val.toFixed(2)}}"`;
           const cellBg = isDiag ? "#f3f4f6" : bg;
           const cellText = isDiag ? "#9ca3af" : text;
-          html += `<td${{title}} style="min-width:110px; padding:9px 8px; text-align:center;
-            font-size:12px; font-weight:600; white-space:nowrap; background:${{cellBg}}; color:${{cellText}}">${{label}}</td>`;
+          const rStr = (!isDiag && val !== null) ? `<div style="font-size:10px;opacity:0.75;margin-top:2px;">${{val >= 0 ? "+" : ""}}${{val.toFixed(2)}}</div>` : "";
+          const isStrong = !isDiag && val !== null && Math.abs(val) >= 0.5;
+          html += `<td style="min-width:80px; padding:6px 6px; text-align:center;
+            font-size:12px; font-weight:600; white-space:nowrap; background:${{cellBg}}; color:${{cellText}};${{isStrong ? "outline:2px solid rgba(0,0,0,0.22);outline-offset:-2px;" : ""}}">${{label}}${{rStr}}</td>`;
         }}
         html += `</tr>`;
       }}
@@ -562,9 +717,9 @@ def symptoms_chart():
       wrapper.style.display = "block";
 
       const {{ med_names, symp_names, matrix }} = data;
-      const thStyle = `style="padding:8px 10px; font-size:13px; font-weight:600;
+      const thStyle = `style="padding:6px 8px; font-size:12px; font-weight:600;
         text-align:center; white-space:nowrap; background:#f5f5f5;"`;
-      const rowHeadStyle = `style="padding:8px 12px; font-size:13px; font-weight:600;
+      const rowHeadStyle = `style="padding:6px 10px; font-size:12px; font-weight:600;
         text-align:right; white-space:nowrap; background:#f5f5f5;"`;
 
       let html = `<table style="border-collapse:collapse; width:100%;">`;
@@ -577,9 +732,10 @@ def symptoms_chart():
           const val = matrix[r][c];
           const {{ bg, text }} = corrColor(val);
           const label = describeR(val, true);
-          const title = val === null ? "" : ` title="r = ${{val >= 0 ? "+" : ""}}${{val.toFixed(2)}}"`;
-          html += `<td${{title}} style="min-width:110px; padding:9px 8px; text-align:center;
-            font-size:12px; font-weight:600; white-space:nowrap; background:${{bg}}; color:${{text}}">${{label}}</td>`;
+          const rStr = val !== null ? `<div style="font-size:10px;opacity:0.75;margin-top:2px;">${{val >= 0 ? "+" : ""}}${{val.toFixed(2)}}</div>` : "";
+          const isStrong = val !== null && Math.abs(val) >= 0.5;
+          html += `<td style="min-width:80px; padding:6px 6px; text-align:center;
+            font-size:12px; font-weight:600; white-space:nowrap; background:${{bg}}; color:${{text}};${{isStrong ? "outline:2px solid rgba(0,0,0,0.22);outline-offset:-2px;" : ""}}">${{label}}${{rStr}}</td>`;
         }}
         html += `</tr>`;
       }}
