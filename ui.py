@@ -365,11 +365,11 @@ PAGE_STYLE = """
     }
     /* ── Profile sidebar ────────────────────────────────────────────── */
     .sidebar {
-      position: fixed; left: 0; top: 52px; bottom: 0; width: 220px;
+      position: fixed; left: 0; top: 52px; bottom: 0; width: 300px;
       background: #fff; border-right: 1px solid #e5e7eb;
       overflow-y: auto; padding: 20px 16px; box-sizing: border-box; z-index: 5;
     }
-    body.has-sidebar .container { margin-left: 236px; margin-right: 0; }
+    body.has-sidebar .container { margin-left: 324px; margin-right: 24px; }
     @media (max-width: 900px) {
       .sidebar { display: none; }
       body.has-sidebar .container { margin-left: auto; margin-right: auto; }

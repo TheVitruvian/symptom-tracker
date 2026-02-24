@@ -160,11 +160,15 @@ def medications_today():
             </div>
             <div style="display:flex;align-items:center;gap:10px;">
               <span style="font-size:13px;color:#6b7280;">{prn_label}</span>
-              <form method="post" action="/medications/doses/take" style="margin:0;">
+              <form method="post" action="/medications/doses/take"
+                style="display:flex;align-items:center;gap:6px;margin:0;">
                 <input type="hidden" name="schedule_id" value="{sid}">
                 <input type="hidden" name="scheduled_date" value="{day_str}">
                 <input type="hidden" name="dose_num" value="{prn_count + 1}">
                 <input type="hidden" name="redirect_to" value="/medications/today">
+                <input type="time" name="taken_time" data-date="{day_str}" class="dose-time"
+                  style="border:1px solid #d1d5db;border-radius:6px;padding:4px 6px;
+                  font-size:13px;font-family:inherit;width:108px;">
                 <button type="submit" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:13px;cursor:pointer;font-family:inherit;">+ Log dose</button>
               </form>
             </div>
@@ -202,11 +206,15 @@ def medications_today():
                         )
                 else:
                     status_html = (
-                        f'<form method="post" action="/medications/doses/take" style="margin:0;">'
+                        f'<form method="post" action="/medications/doses/take"'
+                        f' style="display:flex;align-items:center;gap:6px;margin:0;">'
                         f'<input type="hidden" name="schedule_id" value="{sid}">'
                         f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                         f'<input type="hidden" name="dose_num" value="{dn}">'
                         f'<input type="hidden" name="redirect_to" value="/medications/today">'
+                        f'<input type="time" name="taken_time" data-date="{day_str}" class="dose-time"'
+                        f' style="border:1px solid #d1d5db;border-radius:6px;padding:4px 6px;'
+                        f'font-size:13px;font-family:inherit;width:108px;">'
                         f'<button type="submit" style="background:#15803d;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:13px;cursor:pointer;font-family:inherit;">Take</button>'
                         f'</form>'
                         f'<form method="post" action="/medications/doses/miss" style="margin:0;">'
@@ -257,6 +265,23 @@ def medications_today():
     {_meds_subnav('today')}
     {sections}
   </div>
+  <script>
+    (function () {{
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const nowTime = `${{hh}}:${{mm}}`;
+      const yyyy = now.getFullYear();
+      const mo = String(now.getMonth() + 1).padStart(2, "0");
+      const dd = String(now.getDate()).padStart(2, "0");
+      const today = `${{yyyy}}-${{mo}}-${{dd}}`;
+      document.querySelectorAll("input.dose-time[data-date]").forEach((el) => {{
+        const d = el.getAttribute("data-date") || "";
+        if (!el.value) el.value = d === today ? nowTime : "08:00";
+        if (d === today) el.max = nowTime;
+      }});
+    }})();
+  </script>
 </body>
 </html>"""
 
@@ -508,10 +533,20 @@ def doses_take(
     schedule_id: int = Form(...),
     scheduled_date: str = Form(...),
     dose_num: int = Form(1),
+    taken_time: str = Form(""),
     redirect_to: str = Form("/medications/today"),
 ):
     uid = _current_user_id.get()
-    taken_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_dt = datetime.now()
+    taken_dt = now_dt
+    if taken_time.strip():
+        try:
+            taken_dt = datetime.strptime(f"{scheduled_date} {taken_time.strip()}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            return RedirectResponse(url=redirect_to, status_code=303)
+        if taken_dt > now_dt:
+            return RedirectResponse(url=redirect_to, status_code=303)
+    taken_at = taken_dt.strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
         if not conn.execute(
             "SELECT id FROM medication_schedules WHERE id=? AND user_id=?", (schedule_id, uid)
