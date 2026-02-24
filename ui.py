@@ -1,4 +1,5 @@
 import html
+import re
 from datetime import datetime
 
 from config import _current_user_id, _physician_ctx, CSRF_COOKIE_NAME
@@ -104,39 +105,53 @@ def _sidebar() -> str:
             '</svg></div></a>'
         )
     age = _calc_age(p.get("dob", ""))
-    age_str = f"{age}y" if age else ""
+    age_str = f"{age} years old" if age else ""
     name_esc = html.escape(p.get("name") or "")
     dob_esc = html.escape(p.get("dob") or "")
-    cond_esc = html.escape(p.get("conditions") or "")
-    meds_esc = html.escape(
-        "\n".join(
-            " ".join(filter(None, [m["name"], m["dose"], f'– {m["freq"]}' if m["freq"] else ""]))
-            for m in meds_items
-        ) or p.get("medications") or ""
-    )
-    lbl = 'style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px;"'
+    conditions_raw = p.get("conditions") or ""
+    cond_parts = [c.strip() for c in re.split(r"[,\n]", conditions_raw) if c.strip()]
+    if cond_parts:
+        cond_tags_html = "".join(
+            f'<span style="display:inline-block;background:#f0f9ff;border:1px solid #bae6fd;'
+            f'color:#0369a1;border-radius:20px;padding:3px 10px;font-size:11px;'
+            f'font-weight:500;margin:2px 2px 2px 0;">{html.escape(c)}</span>'
+            for c in cond_parts
+        )
+    else:
+        cond_tags_html = '<em style="color:#d1d5db;font-size:13px;">—</em>'
+    cond_esc = html.escape(conditions_raw)
+    lbl = 'style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.08em;display:block;margin-bottom:6px;"'
     inp = 'style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit;"'
-    ta = 'style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit;resize:vertical;"'
+    ta  = 'style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit;resize:vertical;"'
+    divider = '<hr style="border:none;border-top:1px solid #f3f4f6;margin:14px 0;">'
     return f"""<aside class="sidebar">
-  <div style="text-align:center;margin-bottom:16px;">{avatar}</div>
+  <div style="text-align:center;padding-bottom:16px;border-bottom:2px solid #f3f4f6;margin-bottom:16px;">
+    {avatar}
+    <p id="sb-name-v" style="font-weight:700;font-size:16px;margin:10px 0 3px;color:#111;">{name_esc or '<em style="color:#aaa;font-style:normal;font-size:14px;">Add your name</em>'}</p>
+    <p id="sb-age-v" style="font-size:12px;color:#9ca3af;margin:0;">{age_str}</p>
+  </div>
   <div id="sb-view">
-    <p id="sb-name-v" style="font-weight:700;font-size:15px;margin:0 0 2px;text-align:center;">{name_esc or '<em style="color:#aaa;font-style:normal;">Your name</em>'}</p>
-    <p id="sb-age-v" style="font-size:12px;color:#888;margin:0 0 12px;text-align:center;">{age_str}</p>
     <p {lbl}>Conditions</p>
-    <p id="sb-cond-v" style="font-size:13px;color:#444;margin:0 0 12px;line-height:1.5;">{cond_esc or '<em style="color:#d1d5db;">—</em>'}</p>
+    <div id="sb-cond-v" style="margin:0 0 4px;line-height:1.8;">{cond_tags_html}</div>
+    {divider}
     <p {lbl}>Medications</p>
-    <div id="sb-meds-v" style="margin:0 0 16px;">{meds_html}</div>
-    <button onclick="sbToggle(true)" style="width:100%;background:none;border:1px solid #e5e7eb;border-radius:6px;padding:6px;font-size:13px;color:#6b7280;cursor:pointer;font-family:inherit;">Edit profile</button>
+    <div id="sb-meds-v" style="margin:0 0 4px;">{meds_html}</div>
+    {divider}
+    <div style="display:flex;gap:6px;margin-top:4px;">
+      <a href="/profile" style="flex:1;text-align:center;text-decoration:none;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:7px;font-size:12px;color:#374151;font-weight:500;">Full profile</a>
+      <button onclick="sbToggle(true)" style="flex:1;background:#1e3a8a;color:#fff;border:none;border-radius:6px;padding:7px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit;">&#9998; Edit</button>
+    </div>
   </div>
   <form id="sb-edit" style="display:none;" onsubmit="sbSave(event)">
     <div style="margin-bottom:10px;"><label {lbl}>Name</label>
       <input type="text" name="name" id="sb-name-i" value="{name_esc}" {inp}></div>
     <div style="margin-bottom:10px;"><label {lbl}>Date of Birth</label>
       <input type="date" name="dob" id="sb-dob-i" value="{dob_esc}" {inp}></div>
-    <div style="margin-bottom:10px;"><label {lbl}>Conditions</label>
-      <textarea name="conditions" id="sb-cond-i" rows="3" {ta}>{cond_esc}</textarea></div>
+    <div style="margin-bottom:14px;"><label {lbl}>Conditions</label>
+      <textarea name="conditions" id="sb-cond-i" rows="3" {ta}>{cond_esc}</textarea>
+      <span style="font-size:11px;color:#9ca3af;margin-top:3px;display:block;">Separate with commas</span></div>
     <div style="display:flex;gap:6px;">
-      <button type="submit" style="flex:1;background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:7px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Save</button>
+      <button type="submit" style="flex:1;background:#1e3a8a;color:#fff;border:none;border-radius:6px;padding:7px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Save</button>
       <button type="button" onclick="sbToggle(false)" style="flex:1;background:none;border:1px solid #e5e7eb;border-radius:6px;padding:7px;font-size:13px;color:#6b7280;cursor:pointer;font-family:inherit;">Cancel</button>
     </div>
   </form>
@@ -172,8 +187,19 @@ async function sbSave(e){{
   const name=(document.getElementById('sb-name-i').value||'').trim();
   const cond=(document.getElementById('sb-cond-i').value||'').trim();
   const dob=document.getElementById('sb-dob-i').value;
-  sbSetTextOrPlaceholder('sb-name-v', name, 'color:#aaa;font-style:normal;', 'Your name');
-  sbSetTextOrPlaceholder('sb-cond-v', cond, 'color:#d1d5db;', '—');
+  sbSetTextOrPlaceholder('sb-name-v', name, 'color:#aaa;font-style:normal;font-size:14px;', 'Add your name');
+  const condEl = document.getElementById('sb-cond-v');
+  condEl.innerHTML = '';
+  if (cond) {{
+    cond.split(/[,\n]/).map(s => s.trim()).filter(Boolean).forEach(c => {{
+      const tag = document.createElement('span');
+      tag.textContent = c;
+      tag.setAttribute('style', 'display:inline-block;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:500;margin:2px 2px 2px 0;');
+      condEl.appendChild(tag);
+    }});
+  }} else {{
+    condEl.innerHTML = '<em style="color:#d1d5db;font-size:13px;">\u2014</em>';
+  }}
   if(dob){{const t=new Date(),d=new Date(dob+'T00:00:00');let a=t.getFullYear()-d.getFullYear();if(t<new Date(t.getFullYear(),d.getMonth(),d.getDate()))a--;document.getElementById('sb-age-v').textContent=a+'y';}}
   else{{document.getElementById('sb-age-v').textContent='';}}
   sbToggle(false);
