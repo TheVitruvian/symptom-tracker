@@ -71,12 +71,55 @@ def api_profile_update(
     return JSONResponse({"status": "ok"})
 
 
+FREQ_LABELS = {
+    "once_daily":  "once daily",
+    "twice_daily": "twice daily",
+    "three_daily": "three times daily",
+    "prn":         "as needed (PRN)",
+}
+
+
+def _medications_from_schedules(conn, uid: int) -> str:
+    schedules = conn.execute(
+        "SELECT name, dose, frequency FROM medication_schedules"
+        " WHERE user_id=? AND active=1 ORDER BY name",
+        (uid,),
+    ).fetchall()
+    lines = []
+    seen = set()
+    for r in schedules:
+        freq = FREQ_LABELS.get(r["frequency"], r["frequency"])
+        parts = [r["name"]]
+        if r["dose"]:
+            parts.append(r["dose"])
+        parts.append(f"– {freq}")
+        lines.append(" ".join(parts))
+        seen.add(r["name"].lower())
+    # Also include distinct entries from the ad-hoc log not already covered
+    log_rows = conn.execute(
+        "SELECT name, dose FROM medications WHERE user_id=?"
+        " GROUP BY name ORDER BY MAX(timestamp) DESC",
+        (uid,),
+    ).fetchall()
+    for r in log_rows:
+        if r["name"].lower() not in seen:
+            parts = [r["name"]]
+            if r["dose"]:
+                parts.append(r["dose"])
+            lines.append(" ".join(parts))
+            seen.add(r["name"].lower())
+    return "\n".join(lines)
+
+
 @router.get("/profile", response_class=HTMLResponse)
 def profile_get(saved: int = 0, error: str = ""):
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute("SELECT * FROM user_profile WHERE id = ?", (uid,)).fetchone()
+        sched_text = _medications_from_schedules(conn, uid)
     p = dict(row) if row else {"name": "", "dob": "", "conditions": "", "medications": "", "photo_ext": "", "share_code": "", "email": ""}
+    if sched_text:
+        p["medications"] = sched_text
     age = _calc_age(p["dob"])
     age_str = f" &nbsp;<span style='color:#666;font-size:13px;'>({age} years old)</span>" if age is not None else ""
     if saved:
@@ -160,9 +203,9 @@ def profile_get(saved: int = 0, error: str = ""):
           placeholder="e.g. migraines, asthma">{html.escape(p['conditions'])}</textarea>
       </div>
       <div class="form-group">
-        <label for="medications">Medications</label>
-        <textarea id="medications" name="medications" rows="3"
-          placeholder="e.g. ibuprofen 400mg as needed">{html.escape(p['medications'])}</textarea>
+        <label for="medications">Medications <span style="font-size:12px; font-weight:400; color:#6b7280;">(auto-populated from your schedules &amp; log)</span></label>
+        <textarea id="medications" name="medications" rows="3" readonly
+          style="background:#f9fafb; color:#374151; cursor:default;">{html.escape(p['medications'])}</textarea>
       </div>
       <button type="submit" class="btn-primary">Save Profile</button>
     </form>
@@ -305,3 +348,16 @@ def profile_photo_delete():
         conn.execute("UPDATE user_profile SET photo_ext='' WHERE id=?", (uid,))
         conn.commit()
     return RedirectResponse(url="/profile", status_code=303)
+
+
+@router.post("/profile/sync-medications")
+def profile_sync_medications():
+    uid = _current_user_id.get()
+    with get_db() as conn:
+        meds_text = _medications_from_schedules(conn, uid)
+        conn.execute(
+            "UPDATE user_profile SET medications=? WHERE id=?",
+            (meds_text, uid),
+        )
+        conn.commit()
+    return RedirectResponse(url="/profile?saved=1", status_code=303)

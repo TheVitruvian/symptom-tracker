@@ -23,11 +23,68 @@ def _calc_age(dob_str: str):
         return None
 
 
+_SIDEBAR_FREQ = {
+    "once_daily":  "once daily",
+    "twice_daily": "twice daily",
+    "three_daily": "three times daily",
+    "prn":         "as needed (PRN)",
+}
+
+
+def _sidebar_meds(conn, uid: int) -> list:
+    """Return list of dicts: name, dose, freq (or None), href."""
+    schedules = conn.execute(
+        "SELECT name, dose, frequency FROM medication_schedules"
+        " WHERE user_id=? AND active=1 ORDER BY name", (uid,),
+    ).fetchall()
+    seen, items = set(), []
+    for r in schedules:
+        freq = _SIDEBAR_FREQ.get(r["frequency"], r["frequency"])
+        items.append({"name": r["name"], "dose": r["dose"] or "", "freq": freq, "href": "/medications/schedules"})
+        seen.add(r["name"].lower())
+    for r in conn.execute(
+        "SELECT name, dose FROM medications WHERE user_id=?"
+        " GROUP BY name ORDER BY MAX(timestamp) DESC", (uid,),
+    ).fetchall():
+        if r["name"].lower() not in seen:
+            items.append({"name": r["name"], "dose": r["dose"] or "", "freq": None, "href": "/medications"})
+            seen.add(r["name"].lower())
+    return items
+
+
+def _sidebar_meds_html(items: list) -> str:
+    if not items:
+        return '<em style="color:#d1d5db;">—</em>'
+    rows = []
+    for m in items:
+        name_e = html.escape(m["name"])
+        dose_e = html.escape(m["dose"])
+        freq_e = html.escape(m["freq"]) if m["freq"] else ""
+        meta_parts = []
+        if dose_e:
+            meta_parts.append(dose_e)
+        if freq_e:
+            meta_parts.append(freq_e)
+        meta_html = (
+            f'<span style="font-size:11px;color:#6b7280;display:block;margin-top:1px;">'
+            f'{" · ".join(meta_parts)}</span>'
+        ) if meta_parts else ""
+        rows.append(
+            f'<a href="{m["href"]}" style="display:block;text-decoration:none;padding:5px 7px;'
+            f'border-radius:6px;margin-bottom:3px;background:#f9fafb;border:1px solid #e5e7eb;">'
+            f'<span style="font-size:13px;font-weight:600;color:#1e3a8a;">{name_e}</span>'
+            f'{meta_html}</a>'
+        )
+    return "".join(rows)
+
+
 def _sidebar() -> str:
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute("SELECT * FROM user_profile WHERE id = ?", (uid,)).fetchone()
+        meds_items = _sidebar_meds(conn, uid)
     p = dict(row) if row else {"name": "", "dob": "", "conditions": "", "medications": "", "photo_ext": ""}
+    meds_html = _sidebar_meds_html(meds_items)
     photo_ext = p.get("photo_ext", "")
     if photo_ext:
         avatar = (
@@ -51,7 +108,12 @@ def _sidebar() -> str:
     name_esc = html.escape(p.get("name") or "")
     dob_esc = html.escape(p.get("dob") or "")
     cond_esc = html.escape(p.get("conditions") or "")
-    meds_esc = html.escape(p.get("medications") or "")
+    meds_esc = html.escape(
+        "\n".join(
+            " ".join(filter(None, [m["name"], m["dose"], f'– {m["freq"]}' if m["freq"] else ""]))
+            for m in meds_items
+        ) or p.get("medications") or ""
+    )
     lbl = 'style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:4px;"'
     inp = 'style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit;"'
     ta = 'style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit;resize:vertical;"'
@@ -63,7 +125,7 @@ def _sidebar() -> str:
     <p {lbl}>Conditions</p>
     <p id="sb-cond-v" style="font-size:13px;color:#444;margin:0 0 12px;line-height:1.5;">{cond_esc or '<em style="color:#d1d5db;">—</em>'}</p>
     <p {lbl}>Medications</p>
-    <p id="sb-meds-v" style="font-size:13px;color:#444;margin:0 0 16px;line-height:1.5;">{meds_esc or '<em style="color:#d1d5db;">—</em>'}</p>
+    <div id="sb-meds-v" style="margin:0 0 16px;">{meds_html}</div>
     <button onclick="sbToggle(true)" style="width:100%;background:none;border:1px solid #e5e7eb;border-radius:6px;padding:6px;font-size:13px;color:#6b7280;cursor:pointer;font-family:inherit;">Edit profile</button>
   </div>
   <form id="sb-edit" style="display:none;" onsubmit="sbSave(event)">
@@ -73,8 +135,6 @@ def _sidebar() -> str:
       <input type="date" name="dob" id="sb-dob-i" value="{dob_esc}" {inp}></div>
     <div style="margin-bottom:10px;"><label {lbl}>Conditions</label>
       <textarea name="conditions" id="sb-cond-i" rows="3" {ta}>{cond_esc}</textarea></div>
-    <div style="margin-bottom:14px;"><label {lbl}>Medications</label>
-      <textarea name="medications" id="sb-meds-i" rows="3" {ta}>{meds_esc}</textarea></div>
     <div style="display:flex;gap:6px;">
       <button type="submit" style="flex:1;background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:7px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Save</button>
       <button type="button" onclick="sbToggle(false)" style="flex:1;background:none;border:1px solid #e5e7eb;border-radius:6px;padding:7px;font-size:13px;color:#6b7280;cursor:pointer;font-family:inherit;">Cancel</button>
@@ -111,11 +171,9 @@ async function sbSave(e){{
   await fetch('/api/profile',{{method:'POST',headers:{{'X-CSRF-Token':sbCookie('csrf_token')}},body:fd}});
   const name=(document.getElementById('sb-name-i').value||'').trim();
   const cond=(document.getElementById('sb-cond-i').value||'').trim();
-  const meds=(document.getElementById('sb-meds-i').value||'').trim();
   const dob=document.getElementById('sb-dob-i').value;
   sbSetTextOrPlaceholder('sb-name-v', name, 'color:#aaa;font-style:normal;', 'Your name');
   sbSetTextOrPlaceholder('sb-cond-v', cond, 'color:#d1d5db;', '—');
-  sbSetTextOrPlaceholder('sb-meds-v', meds, 'color:#d1d5db;', '—');
   if(dob){{const t=new Date(),d=new Date(dob+'T00:00:00');let a=t.getFullYear()-d.getFullYear();if(t<new Date(t.getFullYear(),d.getMonth(),d.getDate()))a--;document.getElementById('sb-age-v').textContent=a+'y';}}
   else{{document.getElementById('sb-age-v').textContent='';}}
   sbToggle(false);
@@ -169,7 +227,7 @@ def _nav_bar(active: str = "") -> str:
         '<a href="/symptoms/new" style="background:#fff; color:#1e3a8a; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:6px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Symptom</a>'
-        '<a href="/medications/new" style="background:#a855f7; color:#fff; text-decoration:none;'
+        '<a href="/medications" style="background:#a855f7; color:#fff; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:6px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Medication</a>'
         + dlnk("/profile", "Profile", "profile")
@@ -194,7 +252,7 @@ def _nav_bar(active: str = "") -> str:
         '<a href="/symptoms/new" style="background:#fff; color:#1e3a8a; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:7px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Symptom</a>'
-        '<a href="/medications/new" style="background:#a855f7; color:#fff; text-decoration:none;'
+        '<a href="/medications" style="background:#a855f7; color:#fff; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:7px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Medication</a>'
         '<form method="post" action="/logout" style="margin:0;">'
