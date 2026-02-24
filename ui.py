@@ -191,7 +191,7 @@ async function sbSave(e){{
   const condEl = document.getElementById('sb-cond-v');
   condEl.innerHTML = '';
   if (cond) {{
-    cond.split(/[,\n]/).map(s => s.trim()).filter(Boolean).forEach(c => {{
+    cond.split(/[,\\n]/).map(s => s.trim()).filter(Boolean).forEach(c => {{
       const tag = document.createElement('span');
       tag.textContent = c;
       tag.setAttribute('style', 'display:inline-block;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:500;margin:2px 2px 2px 0;');
