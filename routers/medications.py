@@ -38,7 +38,7 @@ def api_medications():
         taken = conn.execute(
             "SELECT md.id, ms.name, ms.dose, '' AS notes, md.taken_at AS timestamp"
             " FROM medication_doses md"
-            " JOIN medication_schedules ms ON ms.id = md.schedule_id"
+            " JOIN medication_schedules ms ON ms.id = md.schedule_id AND ms.user_id = md.user_id"
             " WHERE md.user_id=? AND md.status='taken' AND md.taken_at != ''"
             " ORDER BY md.taken_at ASC",
             (uid,),

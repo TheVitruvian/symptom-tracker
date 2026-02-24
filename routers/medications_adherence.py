@@ -513,6 +513,10 @@ def doses_take(
     uid = _current_user_id.get()
     taken_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
+        if not conn.execute(
+            "SELECT id FROM medication_schedules WHERE id=? AND user_id=?", (schedule_id, uid)
+        ).fetchone():
+            return RedirectResponse(url=redirect_to, status_code=303)
         conn.execute(
             "DELETE FROM medication_doses WHERE schedule_id=? AND user_id=? AND scheduled_date=? AND dose_num=?",
             (schedule_id, uid, scheduled_date, dose_num),
@@ -535,6 +539,10 @@ def doses_miss(
 ):
     uid = _current_user_id.get()
     with get_db() as conn:
+        if not conn.execute(
+            "SELECT id FROM medication_schedules WHERE id=? AND user_id=?", (schedule_id, uid)
+        ).fetchone():
+            return RedirectResponse(url=redirect_to, status_code=303)
         conn.execute(
             "DELETE FROM medication_doses WHERE schedule_id=? AND user_id=? AND scheduled_date=? AND dose_num=?",
             (schedule_id, uid, scheduled_date, dose_num),
@@ -557,6 +565,10 @@ def doses_undo(
 ):
     uid = _current_user_id.get()
     with get_db() as conn:
+        if not conn.execute(
+            "SELECT id FROM medication_schedules WHERE id=? AND user_id=?", (schedule_id, uid)
+        ).fetchone():
+            return RedirectResponse(url=redirect_to, status_code=303)
         conn.execute(
             "DELETE FROM medication_doses WHERE schedule_id=? AND user_id=? AND scheduled_date=? AND dose_num=?",
             (schedule_id, uid, scheduled_date, dose_num),
