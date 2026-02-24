@@ -121,22 +121,37 @@ def symptoms_chart():
       white-space:nowrap; box-shadow:0 2px 8px rgba(0,0,0,0.2); line-height:1.5;"></div>
 
     <div id="corr-wrapper" style="display:none; margin-top:28px;">
-      <h2 style="font-size:18px; margin-bottom:4px;">How Symptoms Connect</h2>
-      <p style="font-size:13px; color:#666; margin:0 0 12px;">
-        Pearson r between symptom severities, averaged by day.
-        Requires &ge;3 shared days per pair. Red&nbsp;=&nbsp;positive, blue&nbsp;=&nbsp;negative.
-      </p>
-      <div id="corr-table" style="overflow-x:auto;"></div>
+      <details>
+        <summary style="cursor:pointer; padding:10px 14px; background:#f9fafb; border:1px solid #e5e7eb;
+          border-radius:8px; font-size:16px; font-weight:700; color:#111; user-select:none;">
+          How Symptoms Connect
+        </summary>
+        <div style="margin-top:10px;">
+          <p style="font-size:12px; color:#6b7280; margin:0 0 8px; display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
+            <span><span style="display:inline-block;width:10px;height:10px;background:#ffaaaa;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>tend to occur together</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:#aaaaff;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>tend to alternate</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:#e5e7eb;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>no data</span>
+          </p>
+          <div id="corr-table" style="overflow-x:auto;"></div>
+        </div>
+      </details>
     </div>
 
     <div id="med-corr-wrapper" style="display:none; margin-top:28px;">
-      <h2 style="font-size:18px; margin-bottom:4px;">How Medications Affect Symptoms</h2>
-      <p style="font-size:13px; color:#666; margin:0 0 12px;">
-        Pearson r between daily medication doses and symptom severity.
-        Positive (red) = medication often taken on worse days; negative (blue) = associated with lower severity.
-        Requires &ge;3 symptom days with at least one dose.
-      </p>
-      <div id="med-corr-table" style="overflow-x:auto;"></div>
+      <details>
+        <summary style="cursor:pointer; padding:10px 14px; background:#f9fafb; border:1px solid #e5e7eb;
+          border-radius:8px; font-size:16px; font-weight:700; color:#111; user-select:none;">
+          How Medications Affect Symptoms
+        </summary>
+        <div style="margin-top:10px;">
+          <p style="font-size:12px; color:#6b7280; margin:0 0 8px; display:flex; gap:14px; flex-wrap:wrap; align-items:center;">
+            <span><span style="display:inline-block;width:10px;height:10px;background:#ffaaaa;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>taken more on bad days</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:#aaaaff;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>taken more on good days</span>
+            <span><span style="display:inline-block;width:10px;height:10px;background:#e5e7eb;border-radius:2px;vertical-align:middle;margin-right:3px;"></span>no data</span>
+          </p>
+          <div id="med-corr-table" style="overflow-x:auto;"></div>
+        </div>
+      </details>
     </div>
   </div>
 
