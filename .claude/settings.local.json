@@ -6,7 +6,8 @@
       "Bash(python:*)",
       "Bash(timeout 5 uvicorn:*)",
       "Bash(wc:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(.venv/bin/python3:*)"
     ]
   }
 }

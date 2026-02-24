@@ -162,7 +162,7 @@ def _nav_bar(active: str = "") -> str:
         '<div class="nav-desktop-links">'
         + dlnk("/symptoms/chart", "Health Report", "chart")
         + dlnk("/symptoms/calendar", "Calendar", "calendar")
-        + dlnk("/symptoms", "List", "list")
+        + dlnk("/symptoms", "Symptoms", "list")
         + dlnk("/medications/today", "Meds", "meds")
         + '</div>'
         '<div class="nav-desktop-actions">'
@@ -187,7 +187,7 @@ def _nav_bar(active: str = "") -> str:
         '<div id="nav-menu">'
         + mlnk("/symptoms/chart", "Health Report", "chart")
         + mlnk("/symptoms/calendar", "Calendar", "calendar")
-        + mlnk("/symptoms", "List", "list")
+        + mlnk("/symptoms", "Symptoms", "list")
         + mlnk("/medications/today", "Meds", "meds")
         + mlnk("/profile", "Profile", "profile")
         + '<div style="display:flex; gap:8px; flex-wrap:wrap; padding:12px 0 4px;">'

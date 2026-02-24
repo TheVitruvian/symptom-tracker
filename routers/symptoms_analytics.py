@@ -105,6 +105,7 @@ def symptoms_chart():
         <button onclick="setPreset(90)" style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">90d</button>
         <button onclick="setPresetAll()" style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">All</button>
       </div>
+      <button id="smooth-btn" onclick="toggleSmooth()" style="border:1px solid #1e3a8a; background:#1e3a8a; color:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">Smooth</button>
     </div>
 
     <div id="no-data" class="empty" style="display:none; margin-top:24px;">
@@ -120,7 +121,7 @@ def symptoms_chart():
       white-space:nowrap; box-shadow:0 2px 8px rgba(0,0,0,0.2); line-height:1.5;"></div>
 
     <div id="corr-wrapper" style="display:none; margin-top:28px;">
-      <h2 style="font-size:18px; margin-bottom:4px;">Symptom Correlations</h2>
+      <h2 style="font-size:18px; margin-bottom:4px;">How Symptoms Connect</h2>
       <p style="font-size:13px; color:#666; margin:0 0 12px;">
         Pearson r between symptom severities, averaged by day.
         Requires &ge;3 shared days per pair. Red&nbsp;=&nbsp;positive, blue&nbsp;=&nbsp;negative.
@@ -129,7 +130,7 @@ def symptoms_chart():
     </div>
 
     <div id="med-corr-wrapper" style="display:none; margin-top:28px;">
-      <h2 style="font-size:18px; margin-bottom:4px;">Medication &ndash; Symptom Correlations</h2>
+      <h2 style="font-size:18px; margin-bottom:4px;">How Medications Affect Symptoms</h2>
       <p style="font-size:13px; color:#666; margin:0 0 12px;">
         Pearson r between daily medication doses and symptom severity.
         Positive (red) = medication often taken on worse days; negative (blue) = associated with lower severity.
@@ -208,7 +209,7 @@ def symptoms_chart():
       return {{ bg, text: t > 0.55 ? "#fff" : "#333" }};
     }}
 
-    let _allSymp = [], _allMeds = [], _adherenceData = {{}}, _chart = null;
+    let _allSymp = [], _allMeds = [], _adherenceData = {{}}, _chart = null, _smoothed = true;
 
     async function init() {{
       const [sr, mr, ar] = await Promise.all([
@@ -261,6 +262,22 @@ def symptoms_chart():
       render();
     }}
 
+    function toggleSmooth() {{
+      _smoothed = !_smoothed;
+      const btn = document.getElementById("smooth-btn");
+      btn.style.background = _smoothed ? "#1e3a8a" : "#fff";
+      btn.style.color = _smoothed ? "#fff" : "inherit";
+      render();
+    }}
+
+    function applySmoothing(pts) {{
+      return pts.map((pt, i) => {{
+        const start = Math.max(0, i - 6);
+        const vals = pts.slice(start, i + 1).map(p => p.y);
+        return {{ x: pt.x, y: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10 }};
+      }});
+    }}
+
     function render() {{
       const from = document.getElementById("range-from").value;
       const to   = document.getElementById("range-to").value;
@@ -302,16 +319,24 @@ def symptoms_chart():
         }});
       }});
 
+      const sympCounts = new Map();
+      symptoms.forEach(s => sympCounts.set(s.name, (sympCounts.get(s.name) || 0) + 1));
+      const topSymptoms = new Set(
+        [...sympCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n)
+      );
+
       let i = 0;
       const datasets = [];
       for (const [name, byDate] of groups) {{
         const color = PALETTE[i % PALETTE.length]; i++;
+        let pts = [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, sevs]) => ({{
+          x: fmtDate(date),
+          y: Math.round(sevs.reduce((a, b) => a + b, 0) / sevs.length * 10) / 10,
+        }}));
+        if (_smoothed) pts = applySmoothing(pts);
         datasets.push({{
           label: name,
-          data: [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, sevs]) => ({{
-            x: fmtDate(date),
-            y: Math.round(sevs.reduce((a, b) => a + b, 0) / sevs.length * 10) / 10,
-          }})),
+          data: pts,
           borderColor: color, backgroundColor: color + "33",
           tension: 0.4, pointRadius: 4, pointHoverRadius: 7,
         }});
@@ -339,6 +364,7 @@ def symptoms_chart():
             borderColor: color,
             borderWidth: 1.5,
             borderDash: [5, 4],
+            display: false,
             enter(ctx, event) {{ showMedTooltip(event.native, name, m.dose, m.timestamp.slice(11, 16)); }},
             leave() {{ hideMedTooltip(); }},
           }};
@@ -372,10 +398,10 @@ def symptoms_chart():
         }},
       }});
 
-      buildToggles(_chart, datasets, medMeta);
+      buildToggles(_chart, datasets, medMeta, topSymptoms);
     }}
 
-    function buildToggles(chart, datasets, medMeta) {{
+    function buildToggles(chart, datasets, medMeta, topSymptoms) {{
       const bar = document.getElementById("toggle-bar");
       datasets.forEach((ds, i) => {{
         const color = ds.borderColor;
@@ -397,6 +423,13 @@ def symptoms_chart():
           btn.style.borderColor = hidden ? "#d1d5db" : color;
           btn.style.color = hidden ? "#9ca3af" : "#111";
         }};
+        if (!topSymptoms.has(ds.label)) {{
+          chart.getDatasetMeta(i).hidden = true;
+          btn.style.opacity = "0.35";
+          btn.style.background = "transparent";
+          btn.style.borderColor = "#d1d5db";
+          btn.style.color = "#9ca3af";
+        }}
         bar.appendChild(btn);
       }});
       medMeta.forEach(({{ name, color, annotationIds }}) => {{
@@ -420,9 +453,9 @@ def symptoms_chart():
           btn.appendChild(badge);
         }}
         btn.style.cssText = `display:inline-flex;align-items:center;gap:5px;padding:4px 12px;`
-          + `border-radius:20px;border:1.5px solid ${{color}};background:${{color}}22;`
-          + `font-size:13px;cursor:pointer;font-family:inherit;color:#111;transition:opacity .15s;`;
-        let hidden = false;
+          + `border-radius:20px;border:1.5px solid #d1d5db;background:transparent;`
+          + `font-size:13px;cursor:pointer;font-family:inherit;color:#9ca3af;transition:opacity .15s;opacity:0.35;`;
+        let hidden = true;
         btn.onclick = () => {{
           hidden = !hidden;
           annotationIds.forEach(id => {{
@@ -436,6 +469,7 @@ def symptoms_chart():
         }};
         bar.appendChild(btn);
       }});
+      chart.update();
     }}
 
     function describeR(r, isMed) {{
