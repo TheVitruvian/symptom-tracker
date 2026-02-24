@@ -81,12 +81,12 @@ def symptoms_chart():
 <html>
 <head>
   {PAGE_STYLE}
-  <title>Symptom Chart</title>
+  <title>Health Report</title>
 </head>
 <body>
   {_nav_bar('chart')}
   <div class="container" style="max-width:860px;">
-    <h1>Symptom Chart</h1>
+    <h1>Health Report</h1>
 
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:12px;">
       <div style="display:flex; align-items:center; gap:6px;">
@@ -115,6 +115,9 @@ def symptoms_chart():
       <div id="toggle-bar" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px;"></div>
       <canvas id="symptomChart"></canvas>
     </div>
+    <div id="med-tooltip" style="display:none; position:fixed; background:#1e3a8a; color:#fff;
+      padding:6px 10px; border-radius:6px; font-size:13px; pointer-events:none; z-index:100;
+      white-space:nowrap; box-shadow:0 2px 8px rgba(0,0,0,0.2); line-height:1.5;"></div>
 
     <div id="corr-wrapper" style="display:none; margin-top:28px;">
       <h2 style="font-size:18px; margin-bottom:4px;">Symptom Correlations</h2>
@@ -137,21 +140,27 @@ def symptoms_chart():
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3/dist/chartjs-plugin-annotation.min.js"></script>
   <script>
     const PALETTE = [
       "#3b82f6","#ef4444","#22c55e","#f97316","#a855f7",
       "#06b6d4","#eab308","#ec4899","#14b8a6","#f43f5e","#8b5cf6","#84cc16"
     ];
     const MED_PALETTE = ["#7c3aed","#9333ea","#a855f7","#6d28d9","#c026d3","#0ea5e9","#0f766e","#b45309"];
-    const MED_SHAPES = ["triangle","rectRot","star","crossRot","rect","circle"];
-    const MED_SYMBOLS = {{
-      triangle: "&#9650;",   // ▲
-      rectRot: "&#9670;",    // ◆
-      star: "&#9733;",       // ★
-      crossRot: "&#10006;",  // ✖
-      rect: "&#9632;",       // ■
-      circle: "&#9679;",     // ●
-    }};
+    function showMedTooltip(e, name, dose, time) {{
+      const tip = document.getElementById("med-tooltip");
+      let html = `<strong>${{escHtml(name)}}</strong>`;
+      if (dose) html += `<br>${{escHtml(dose)}}`;
+      html += `<br>${{time}}`;
+      tip.innerHTML = html;
+      tip.style.display = "block";
+      tip.style.left = (e.clientX + 14) + "px";
+      tip.style.top  = (e.clientY - 10) + "px";
+    }}
+    function hideMedTooltip() {{
+      document.getElementById("med-tooltip").style.display = "none";
+    }}
+
     function escHtml(v) {{
       return String(v)
         .replace(/&/g, "&amp;")
@@ -164,6 +173,20 @@ def symptoms_chart():
     function fmtDate(dateStr) {{
       const d = new Date(dateStr + "T00:00:00Z");
       return d.toLocaleDateString("en-US", {{ month: "short", day: "numeric", timeZone: "UTC" }});
+    }}
+
+    function expandSymptomDates(s) {{
+      const start = s.timestamp.slice(0, 10);
+      const end   = s.end_time ? s.end_time.slice(0, 10) : start;
+      if (start === end) return [start];
+      const dates = [];
+      let d = new Date(start + "T00:00:00");
+      const last = new Date(end + "T00:00:00");
+      while (d <= last) {{
+        dates.push(d.toISOString().slice(0, 10));
+        d = new Date(d.getTime() + 86400000);
+      }}
+      return dates;
     }}
 
     function stableIndex(name, size) {{
@@ -185,22 +208,26 @@ def symptoms_chart():
       return {{ bg, text: t > 0.55 ? "#fff" : "#333" }};
     }}
 
-    let _allSymp = [], _allMeds = [], _chart = null;
+    let _allSymp = [], _allMeds = [], _adherenceData = {{}}, _chart = null;
 
     async function init() {{
-      const [sr, mr] = await Promise.all([fetch("/api/symptoms"), fetch("/api/medications")]);
-      const [sd, md] = await Promise.all([sr.json(), mr.json()]);
+      const [sr, mr, ar] = await Promise.all([
+        fetch("/api/symptoms"), fetch("/api/medications"), fetch("/api/medications/adherence")
+      ]);
+      const [sd, md, ad] = await Promise.all([sr.json(), mr.json(), ar.json()]);
       _allSymp = sd.symptoms;
       _allMeds = md.medications;
+      _adherenceData = {{}};
+      for (const s of ad.schedules) _adherenceData[s.name] = s;
 
       if (_allSymp.length < 2 && _allMeds.length === 0) {{
         document.getElementById("no-data").style.display = "block";
         return;
       }}
 
-      // Default range: last 30 days of data
+      // Default range: last 30 days of data (use end_time for multi-day symptoms)
       const dates = [
-        ..._allSymp.map(s => s.timestamp.slice(0, 10)),
+        ..._allSymp.map(s => (s.end_time || s.timestamp).slice(0, 10)),
         ..._allMeds.map(m => m.timestamp.slice(0, 10)),
       ].sort();
       if (dates.length) {{
@@ -224,6 +251,7 @@ def symptoms_chart():
     function setPresetAll() {{
       const dates = [
         ..._allSymp.map(s => s.timestamp.slice(0, 10)),
+        ..._allSymp.map(s => (s.end_time || s.timestamp).slice(0, 10)),
         ..._allMeds.map(m => m.timestamp.slice(0, 10)),
       ].sort();
       if (dates.length) {{
@@ -237,8 +265,9 @@ def symptoms_chart():
       const from = document.getElementById("range-from").value;
       const to   = document.getElementById("range-to").value;
       const syms = _allSymp.filter(s => {{
-        const d = s.timestamp.slice(0, 10);
-        return (!from || d >= from) && (!to || d <= to);
+        const start = s.timestamp.slice(0, 10);
+        const end   = s.end_time ? s.end_time.slice(0, 10) : start;
+        return (!from || end >= from) && (!to || start <= to);
       }});
       const meds = _allMeds.filter(m => {{
         const d = m.timestamp.slice(0, 10);
@@ -259,17 +288,18 @@ def symptoms_chart():
       if (!hasData) return;
 
       const allDates = new Set();
-      symptoms.forEach(s => allDates.add(s.timestamp.slice(0, 10)));
+      symptoms.forEach(s => expandSymptomDates(s).forEach(date => allDates.add(date)));
       medications.forEach(m => allDates.add(m.timestamp.slice(0, 10)));
       const labels = [...allDates].sort().map(d => fmtDate(d));
 
       const groups = new Map();
       symptoms.forEach(s => {{
-        const date = s.timestamp.slice(0, 10);
-        if (!groups.has(s.name)) groups.set(s.name, new Map());
-        const byDate = groups.get(s.name);
-        if (!byDate.has(date)) byDate.set(date, []);
-        byDate.get(date).push(s.severity);
+        expandSymptomDates(s).forEach(date => {{
+          if (!groups.has(s.name)) groups.set(s.name, new Map());
+          const byDate = groups.get(s.name);
+          if (!byDate.has(date)) byDate.set(date, []);
+          byDate.get(date).push(s.severity);
+        }});
       }});
 
       let i = 0;
@@ -292,29 +322,28 @@ def symptoms_chart():
         if (!medGroups.has(m.name)) medGroups.set(m.name, []);
         medGroups.get(m.name).push(m);
       }});
-      let lane = 0;
+
+      // Build vertical line annotations for each medication event
+      const medAnnotations = {{}};
+      const medMeta = []; // {{ name, color, annotationIds }}
       for (const [name, meds] of [...medGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {{
         const color = MED_PALETTE[stableIndex(name, MED_PALETTE.length)];
-        const shape = MED_SHAPES[stableIndex(name + "::shape", MED_SHAPES.length)];
-        const yLane = 0.12 + lane * 0.14;
-        lane += 1;
-        datasets.push({{
-          type: "scatter", label: name, _isMed: true, _medSymbol: MED_SYMBOLS[shape],
-          data: meds.map(m => ({{
-            x: fmtDate(m.timestamp.slice(0, 10)), y: yLane,
-            _dose: m.dose, _time: m.timestamp.slice(11, 16),
-          }})),
-          // Use high-contrast fill + dark outline for crisper medication markers.
-          backgroundColor: "#ffffff",
-          borderColor: color,
-          pointStyle: shape,
-          pointRadius: 9,
-          pointHoverRadius: 11,
-          pointBorderWidth: 2.6,
-          pointHoverBorderWidth: 3.2,
-          pointHoverBackgroundColor: "#ffffff",
-          pointHoverBorderColor: "#4c1d95",
+        const ids = [];
+        meds.forEach((m, j) => {{
+          const id = `med_${{j}}_${{name}}`;
+          ids.push(id);
+          medAnnotations[id] = {{
+            type: "line",
+            scaleID: "x",
+            value: fmtDate(m.timestamp.slice(0, 10)),
+            borderColor: color,
+            borderWidth: 1.5,
+            borderDash: [5, 4],
+            enter(ctx, event) {{ showMedTooltip(event.native, name, m.dose, m.timestamp.slice(11, 16)); }},
+            leave() {{ hideMedTooltip(); }},
+          }};
         }});
+        medMeta.push({{ name, color, annotationIds: ids }});
       }}
 
       _chart = new Chart(document.getElementById("symptomChart"), {{
@@ -325,22 +354,17 @@ def symptoms_chart():
           scales: {{
             x: {{ type: "category", title: {{ display: true, text: "Date (UTC)" }} }},
             y: {{
-              min: 0, max: 10,
-              ticks: {{ stepSize: 1, callback: (val) => val === 0 ? "Rx" : val }},
+              min: 1, max: 10,
+              ticks: {{ stepSize: 1 }},
               title: {{ display: true, text: "Avg Severity" }},
             }},
           }},
           plugins: {{
+            annotation: {{ annotations: medAnnotations }},
             tooltip: {{
               callbacks: {{
                 title: (items) => items[0].dataset.label,
-                label: (item) => {{
-                  if (item.dataset._isMed) {{
-                    const d = item.raw;
-                    return d._dose ? `${{d._time}} — ${{d._dose}}` : `Taken at ${{d._time}}`;
-                  }}
-                  return `Avg severity: ${{item.parsed.y}} on ${{item.label}}`;
-                }},
+                label: (item) => `Avg severity: ${{item.parsed.y}} on ${{item.label}}`,
               }},
             }},
             legend: {{ display: false }},
@@ -348,25 +372,17 @@ def symptoms_chart():
         }},
       }});
 
-      buildToggles(_chart, datasets);
+      buildToggles(_chart, datasets, medMeta);
     }}
 
-    function buildToggles(chart, datasets) {{
+    function buildToggles(chart, datasets, medMeta) {{
       const bar = document.getElementById("toggle-bar");
       datasets.forEach((ds, i) => {{
-        const color = ds.borderColor || ds.backgroundColor;
-        const isMed = !!ds._isMed;
+        const color = ds.borderColor;
         const btn = document.createElement("button");
-        if (isMed) {{
-          const icon = document.createElement("span");
-          icon.style.cssText = `font-size:10px;color:${{color}};line-height:1;`;
-          icon.innerHTML = ds._medSymbol || "&#9650;";
-          btn.appendChild(icon);
-        }} else {{
-          const dot = document.createElement("span");
-          dot.style.cssText = `width:10px;height:10px;border-radius:50%;background:${{color}};flex-shrink:0;display:inline-block;`;
-          btn.appendChild(dot);
-        }}
+        const dot = document.createElement("span");
+        dot.style.cssText = `width:10px;height:10px;border-radius:50%;background:${{color}};flex-shrink:0;display:inline-block;`;
+        btn.appendChild(dot);
         btn.appendChild(document.createTextNode(` ${{ds.label}}`));
         btn.style.cssText = `display:inline-flex;align-items:center;gap:5px;padding:4px 12px;`
           + `border-radius:20px;border:1.5px solid ${{color}};background:${{color}}22;`
@@ -376,6 +392,43 @@ def symptoms_chart():
           meta.hidden = !meta.hidden;
           chart.update();
           const hidden = meta.hidden;
+          btn.style.opacity = hidden ? "0.35" : "1";
+          btn.style.background = hidden ? "transparent" : `${{color}}22`;
+          btn.style.borderColor = hidden ? "#d1d5db" : color;
+          btn.style.color = hidden ? "#9ca3af" : "#111";
+        }};
+        bar.appendChild(btn);
+      }});
+      medMeta.forEach(({{ name, color, annotationIds }}) => {{
+        const btn = document.createElement("button");
+        const icon = document.createElement("span");
+        icon.style.cssText = `display:inline-block;width:18px;height:0;border-top:2px dashed ${{color}};vertical-align:middle;flex-shrink:0;`;
+        btn.appendChild(icon);
+        btn.appendChild(document.createTextNode(` ${{name}}`));
+        const adh = _adherenceData[name];
+        if (adh) {{
+          const badge = document.createElement("span");
+          if (adh.adherence_7d_pct !== null) {{
+            const pct = Math.round(adh.adherence_7d_pct);
+            const bg = pct >= 80 ? "#dcfce7;color:#15803d" : pct >= 50 ? "#fef9c3;color:#92400e" : "#fee2e2;color:#b91c1c";
+            badge.textContent = " " + pct + "%";
+            badge.style.cssText = "font-size:11px;background:" + bg + ";border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;";
+          }} else {{
+            badge.textContent = " " + adh.taken_7d + "\u00d7";
+            badge.style.cssText = "font-size:11px;background:#ede9fe;color:#7c3aed;border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;";
+          }}
+          btn.appendChild(badge);
+        }}
+        btn.style.cssText = `display:inline-flex;align-items:center;gap:5px;padding:4px 12px;`
+          + `border-radius:20px;border:1.5px solid ${{color}};background:${{color}}22;`
+          + `font-size:13px;cursor:pointer;font-family:inherit;color:#111;transition:opacity .15s;`;
+        let hidden = false;
+        btn.onclick = () => {{
+          hidden = !hidden;
+          annotationIds.forEach(id => {{
+            chart.options.plugins.annotation.annotations[id].display = !hidden;
+          }});
+          chart.update();
           btn.style.opacity = hidden ? "0.35" : "1";
           btn.style.background = hidden ? "transparent" : `${{color}}22`;
           btn.style.borderColor = hidden ? "#d1d5db" : color;
@@ -575,18 +628,47 @@ def symptoms_calendar():
 
     function pad(n) { return String(n).padStart(2, "0"); }
 
-    let byDate = {};     // "YYYY-MM-DD" -> [{id,name,severity,notes,timestamp}]
+    let byDate = {};     // "YYYY-MM-DD" -> [{id,name,severity,notes,timestamp,end_time}]
     let medsByDate = {}; // "YYYY-MM-DD" -> [{id,name,dose,notes,timestamp}]
     let curYear, curMonth, selectedDate = null;
+
+    function expandSymptomDatesCal(s) {
+      const start = s.timestamp.slice(0, 10);
+      const end   = s.end_time ? s.end_time.slice(0, 10) : start;
+      if (start === end) return [start];
+      const dates = [];
+      let d = new Date(start + "T00:00:00");
+      const last = new Date(end + "T00:00:00");
+      while (d <= last) {
+        dates.push(d.toISOString().slice(0, 10));
+        d = new Date(d.getTime() + 86400000);
+      }
+      return dates;
+    }
+
+    function fmtDetailTime(e) {
+      const startTime = e.timestamp.slice(11, 16);
+      if (!e.end_time) return startTime;
+      const startDate = e.timestamp.slice(0, 10);
+      const endDate   = e.end_time.slice(0, 10);
+      const endTime   = e.end_time.slice(11, 16);
+      if (startDate === endDate) return startTime + " \u2013 " + endTime;
+      const sd = new Date(startDate + "T00:00:00");
+      const ed = new Date(endDate   + "T00:00:00");
+      const days = Math.round((ed - sd) / 86400000) + 1;
+      const fmt = d => d.toLocaleDateString("en-US", {month: "short", day: "numeric", timeZone: "UTC"});
+      return fmt(sd) + " " + startTime + " \u2192 " + fmt(ed) + " " + endTime + " (" + days + " days)";
+    }
 
     async function loadData() {
       const [sympResp, medResp] = await Promise.all([fetch("/api/symptoms"), fetch("/api/medications")]);
       const [sympData, medData] = await Promise.all([sympResp.json(), medResp.json()]);
       byDate = {};
       for (const s of sympData.symptoms) {
-        const date = s.timestamp.slice(0, 10);
-        if (!byDate[date]) byDate[date] = [];
-        byDate[date].push(s);
+        for (const date of expandSymptomDatesCal(s)) {
+          if (!byDate[date]) byDate[date] = [];
+          byDate[date].push(s);
+        }
       }
       medsByDate = {};
       for (const m of medData.medications) {
@@ -725,7 +807,7 @@ def symptoms_calendar():
         cards.appendChild(div);
       }
       for (const e of entries) {
-        const time = e.timestamp.slice(11, 16);  // HH:MM
+        const time = fmtDetailTime(e);
         const notesHtml = e.notes
           ? `<p class="detail-notes">${escHtml(e.notes)}</p>`
           : "";

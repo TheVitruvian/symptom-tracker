@@ -1,5 +1,5 @@
 import html
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -30,12 +30,42 @@ _MED_DATALIST = "".join(f'<option value="{html.escape(med)}">' for med in MEDICA
 def api_medications():
     uid = _current_user_id.get()
     with get_db() as conn:
-        rows = conn.execute(
+        adhoc = conn.execute(
             "SELECT id, name, dose, notes, timestamp FROM medications"
             " WHERE user_id = ? ORDER BY timestamp ASC",
             (uid,),
         ).fetchall()
-    return JSONResponse({"medications": [dict(r) for r in rows]})
+        taken = conn.execute(
+            "SELECT md.id, ms.name, ms.dose, '' AS notes, md.taken_at AS timestamp"
+            " FROM medication_doses md"
+            " JOIN medication_schedules ms ON ms.id = md.schedule_id"
+            " WHERE md.user_id=? AND md.status='taken' AND md.taken_at != ''"
+            " ORDER BY md.taken_at ASC",
+            (uid,),
+        ).fetchall()
+    result = sorted(
+        [dict(r) for r in adhoc] + [dict(r) for r in taken],
+        key=lambda r: r["timestamp"],
+    )
+    return JSONResponse({"medications": result})
+
+
+def _meds_subnav_log() -> str:
+    """Inline copy of sub-nav (avoids circular import with medications_adherence)."""
+    def lnk(href, label, active):
+        s = (
+            "font-weight:700;color:#7c3aed;border-bottom:2px solid #7c3aed;padding-bottom:2px;"
+            if active else "color:#6b7280;"
+        )
+        return f'<a href="{href}" style="text-decoration:none;font-size:14px;{s}">{label}</a>'
+    return (
+        '<div style="display:flex;gap:20px;border-bottom:1px solid #e5e7eb;'
+        'padding-bottom:12px;margin-bottom:20px;flex-wrap:wrap;">'
+        + lnk("/medications/today",     "Today's Doses", False)
+        + lnk("/medications/schedules", "Schedules",     False)
+        + lnk("/medications",           "Log",           True)
+        + "</div>"
+    )
 
 
 @router.get("/medications", response_class=HTMLResponse)
@@ -47,6 +77,40 @@ def medications_list():
             " WHERE user_id = ? ORDER BY timestamp DESC",
             (uid,),
         ).fetchall()
+        # Schedules summary for top section
+        schedules = conn.execute(
+            "SELECT id, name, dose, frequency, start_date FROM medication_schedules"
+            " WHERE user_id=? AND active=1 ORDER BY name",
+            (uid,),
+        ).fetchall()
+        from routers.medications_adherence import _adherence_7d, _adherence_badge, FREQ_LABELS
+        sched_cards = ""
+        for s in schedules:
+            adh = _adherence_7d(conn, s["id"], uid, s["start_date"], s["frequency"])
+            badge = _adherence_badge(adh)
+            freq_label = FREQ_LABELS.get(s["frequency"], s["frequency"])
+            sched_cards += (
+                f'<div style="display:flex;align-items:center;justify-content:space-between;'
+                f'flex-wrap:wrap;gap:6px;padding:10px 0;border-bottom:1px solid #f3f4f6;">'
+                f'<div>'
+                f'<span style="font-weight:700;font-size:14px;">{html.escape(s["name"])}</span>'
+                + (f' <span style="font-size:12px;color:#7c3aed;font-weight:600;">{html.escape(s["dose"])}</span>' if s["dose"] else "")
+                + f'<span style="font-size:12px;color:#9ca3af;margin-left:6px;">{html.escape(freq_label)}</span>'
+                f'</div>'
+                f'<div>{badge}</div>'
+                f'</div>'
+            )
+
+    schedules_section = ""
+    if schedules:
+        schedules_section = f"""
+    <div class="card" style="margin-bottom:20px;padding:16px 18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
+        <span style="font-size:15px;font-weight:700;color:#111;">Active Schedules</span>
+        <a href="/medications/schedules" style="font-size:13px;color:#7c3aed;text-decoration:none;">Manage &rarr;</a>
+      </div>
+      {sched_cards}
+    </div>"""
 
     groups: dict[str, list] = {}
     for row in rows:
@@ -131,6 +195,8 @@ def medications_list():
   {_nav_bar('meds')}
   <div class="container">
     <h1>Medications</h1>
+    {_meds_subnav_log()}
+    {schedules_section}
     <a href="/medications/new" class="btn-log med-cta">+ Log Medication</a>
     {sections}
   </div>

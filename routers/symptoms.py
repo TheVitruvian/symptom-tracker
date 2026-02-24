@@ -11,12 +11,29 @@ from ui import PAGE_STYLE, _nav_bar, _sidebar, _severity_color
 router = APIRouter()
 
 
+def _fmt_duration(start_str: str, end_str: str) -> str:
+    """Return a human-readable duration string for a symptom entry."""
+    if not end_str:
+        return start_str
+    start_dt = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
+    end_dt = datetime.strptime(end_str, "%Y-%m-%d %H:%M:%S")
+    start_time = start_str[11:16]
+    end_time_str = end_str[11:16]
+    if start_str[:10] == end_str[:10]:
+        return f"{start_dt.strftime('%b')} {start_dt.day} \u2014 {start_time}\u2013{end_time_str}"
+    else:
+        return (
+            f"{start_dt.strftime('%b')} {start_dt.day} {start_time}"
+            f" \u2013 {end_dt.strftime('%b')} {end_dt.day} {end_time_str}"
+        )
+
+
 @router.get("/symptoms", response_class=HTMLResponse)
 def symptoms_list():
     uid = _current_user_id.get()
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, name, severity, notes, timestamp FROM symptoms"
+            "SELECT id, name, severity, notes, timestamp, end_time FROM symptoms"
             " WHERE user_id = ? ORDER BY timestamp DESC",
             (uid,),
         ).fetchall()
@@ -39,7 +56,7 @@ def symptoms_list():
                 <div class="badge" style="background:{_severity_color(e['severity'])}">{e['severity']}</div>
                 <div>
                   <div class="card-name">{html.escape(e['name'])}</div>
-                  <div class="card-ts">{html.escape(e['timestamp'])}</div>
+                  <div class="card-ts">{html.escape(_fmt_duration(e['timestamp'], e['end_time']))}</div>
                 </div>
               </div>
               {"<p class='card-notes'>" + html.escape(e['notes']) + "</p>" if e['notes'] else ""}
@@ -134,9 +151,16 @@ def symptoms_new(error: str = ""):
         </div>
 
         <div class="form-group">
-          <label for="symptom_date">Date &amp; time <span style="color:#aaa;font-weight:400">(defaults to now)</span></label>
+          <label for="symptom_date">Start date &amp; time <span style="color:#aaa;font-weight:400">(defaults to now)</span></label>
           <input type="datetime-local" id="symptom_date" name="symptom_date" required
                  style="width:auto;">
+        </div>
+
+        <div class="form-group">
+          <label for="end_date">End date &amp; time
+            <span style="color:#aaa;font-weight:400">(optional — leave blank for a single moment)</span>
+          </label>
+          <input type="datetime-local" id="end_date" name="end_date" style="width:auto;">
         </div>
 
         <button class="btn-primary" type="submit">Save Symptom</button>
@@ -160,8 +184,15 @@ def symptoms_new(error: str = ""):
     const now = new Date();
     const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
     const localStr = local.toISOString().slice(0, 16);
-    document.getElementById("symptom_date").value = localStr;
-    document.getElementById("symptom_date").max = localStr;
+    const startEl = document.getElementById("symptom_date");
+    const endEl   = document.getElementById("end_date");
+    startEl.value = localStr;
+    startEl.max   = localStr;
+    endEl.max     = localStr;
+    startEl.addEventListener("change", () => {{
+      endEl.min = startEl.value;
+      if (endEl.value && endEl.value <= startEl.value) endEl.value = "";
+    }});
   </script>
 </body>
 </html>
@@ -174,6 +205,7 @@ def symptoms_create(
     severity: int = Form(...),
     notes: str = Form(""),
     symptom_date: str = Form(...),
+    end_date: str = Form(""),
 ):
     if not name.strip():
         return RedirectResponse(url="/symptoms/new?error=Symptom+name+is+required", status_code=303)
@@ -186,11 +218,22 @@ def symptoms_create(
     if ts_dt > datetime.now():
         return RedirectResponse(url="/symptoms/new?error=Date+cannot+be+in+the+future", status_code=303)
     timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
+    end_time = ""
+    if end_date.strip():
+        try:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return RedirectResponse(url="/symptoms/new?error=Invalid+end+date+format", status_code=303)
+        if end_dt > datetime.now():
+            return RedirectResponse(url="/symptoms/new?error=End+date+cannot+be+in+the+future", status_code=303)
+        if end_dt <= ts_dt:
+            return RedirectResponse(url="/symptoms/new?error=End+date+must+be+after+start+date", status_code=303)
+        end_time = end_dt.strftime("%Y-%m-%d %H:%M:%S")
     uid = _current_user_id.get()
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO symptoms (name, severity, notes, timestamp, user_id) VALUES (?, ?, ?, ?, ?)",
-            (name.strip(), severity, notes.strip(), timestamp, uid),
+            "INSERT INTO symptoms (name, severity, notes, timestamp, end_time, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+            (name.strip(), severity, notes.strip(), timestamp, end_time, uid),
         )
         conn.commit()
     return RedirectResponse(url="/symptoms", status_code=303)
@@ -216,6 +259,7 @@ def symptoms_edit_get(sym_id: int, error: str = ""):
         return RedirectResponse(url="/symptoms", status_code=303)
     e = dict(row)
     dt_local = e["timestamp"].replace(" ", "T")[:16]
+    end_local = e["end_time"].replace(" ", "T")[:16] if e.get("end_time") else ""
     sev = e["severity"]
     error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
     return f"""<!DOCTYPE html>
@@ -254,9 +298,16 @@ def symptoms_edit_get(sym_id: int, error: str = ""):
           <textarea id="notes" name="notes" rows="3">{html.escape(e['notes'])}</textarea>
         </div>
         <div class="form-group">
-          <label for="symptom_date">Date &amp; time</label>
+          <label for="symptom_date">Start date &amp; time</label>
           <input type="datetime-local" id="symptom_date" name="symptom_date"
                  value="{dt_local}" required style="width:auto;">
+        </div>
+        <div class="form-group">
+          <label for="end_date">End date &amp; time
+            <span style="color:#aaa;font-weight:400">(optional)</span>
+          </label>
+          <input type="datetime-local" id="end_date" name="end_date"
+                 value="{end_local}" style="width:auto;">
         </div>
         <div style="display:flex; gap:12px; align-items:center;">
           <button class="btn-primary" type="submit">Save Changes</button>
@@ -280,7 +331,16 @@ def symptoms_edit_get(sym_id: int, error: str = ""):
     // Cap max at current local time so future dates can't be selected
     const _now = new Date();
     const _local = new Date(_now.getTime() - _now.getTimezoneOffset() * 60000);
-    document.getElementById("symptom_date").max = _local.toISOString().slice(0, 16);
+    const _nowStr = _local.toISOString().slice(0, 16);
+    const _startEl = document.getElementById("symptom_date");
+    const _endEl   = document.getElementById("end_date");
+    _startEl.max = _nowStr;
+    _endEl.max   = _nowStr;
+    _endEl.min   = _startEl.value;
+    _startEl.addEventListener("change", () => {{
+      _endEl.min = _startEl.value;
+      if (_endEl.value && _endEl.value <= _startEl.value) _endEl.value = "";
+    }});
   </script>
 </body>
 </html>"""
@@ -293,6 +353,7 @@ def symptoms_edit_post(
     severity: int = Form(...),
     notes: str = Form(""),
     symptom_date: str = Form(...),
+    end_date: str = Form(""),
 ):
     if not name.strip():
         return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Symptom+name+is+required", status_code=303)
@@ -305,12 +366,23 @@ def symptoms_edit_post(
     if ts_dt > datetime.now():
         return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Date+cannot+be+in+the+future", status_code=303)
     timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
+    end_time = ""
+    if end_date.strip():
+        try:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Invalid+end+date+format", status_code=303)
+        if end_dt > datetime.now():
+            return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=End+date+cannot+be+in+the+future", status_code=303)
+        if end_dt <= ts_dt:
+            return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=End+date+must+be+after+start+date", status_code=303)
+        end_time = end_dt.strftime("%Y-%m-%d %H:%M:%S")
     uid = _current_user_id.get()
     with get_db() as conn:
         conn.execute(
-            "UPDATE symptoms SET name = ?, severity = ?, notes = ?, timestamp = ?"
+            "UPDATE symptoms SET name = ?, severity = ?, notes = ?, timestamp = ?, end_time = ?"
             " WHERE id = ? AND user_id = ?",
-            (name.strip(), severity, notes.strip(), timestamp, sym_id, uid),
+            (name.strip(), severity, notes.strip(), timestamp, end_time, sym_id, uid),
         )
         conn.commit()
     return RedirectResponse(url="/symptoms", status_code=303)
@@ -321,7 +393,7 @@ def api_symptoms():
     uid = _current_user_id.get()
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, name, severity, notes, timestamp FROM symptoms"
+            "SELECT id, name, severity, notes, timestamp, end_time FROM symptoms"
             " WHERE user_id = ? ORDER BY timestamp ASC",
             (uid,),
         ).fetchall()

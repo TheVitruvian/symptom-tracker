@@ -56,10 +56,12 @@ def init_db():
             conn.execute(
                 "ALTER TABLE user_profile ADD COLUMN email TEXT NOT NULL DEFAULT ''"
             )
-        # Migrate symptoms: add user_id column
+        # Migrate symptoms: add user_id and end_time columns
         symp_cols = [row[1] for row in conn.execute("PRAGMA table_info(symptoms)")]
         if "user_id" not in symp_cols:
             conn.execute("ALTER TABLE symptoms ADD COLUMN user_id INTEGER NOT NULL DEFAULT 1")
+        if "end_time" not in symp_cols:
+            conn.execute("ALTER TABLE symptoms ADD COLUMN end_time TEXT NOT NULL DEFAULT ''")
         # Migrate medications: add user_id column
         med_cols = [row[1] for row in conn.execute("PRAGMA table_info(medications)")]
         if "user_id" not in med_cols:
@@ -78,6 +80,32 @@ def init_db():
                 physician_id INTEGER NOT NULL REFERENCES physicians(id),
                 patient_id   INTEGER NOT NULL REFERENCES user_profile(id),
                 PRIMARY KEY (physician_id, patient_id)
+            )
+        """)
+        # Medication schedules and dose tracking
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS medication_schedules (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER NOT NULL,
+                name       TEXT    NOT NULL,
+                dose       TEXT    NOT NULL DEFAULT '',
+                notes      TEXT    NOT NULL DEFAULT '',
+                frequency  TEXT    NOT NULL,
+                start_date TEXT    NOT NULL,
+                end_date   TEXT    NOT NULL DEFAULT '',
+                active     INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS medication_doses (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                schedule_id    INTEGER NOT NULL REFERENCES medication_schedules(id),
+                user_id        INTEGER NOT NULL,
+                scheduled_date TEXT    NOT NULL,
+                dose_num       INTEGER NOT NULL DEFAULT 1,
+                taken_at       TEXT    NOT NULL DEFAULT '',
+                status         TEXT    NOT NULL DEFAULT 'pending',
+                notes          TEXT    NOT NULL DEFAULT ''
             )
         """)
         # Password reset tokens

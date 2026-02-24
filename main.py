@@ -15,7 +15,7 @@ from security import (
     _csrf_header_valid,
     _is_same_origin,
 )
-from routers import auth, symptoms, symptoms_analytics, medications, profile, physician
+from routers import auth, symptoms, symptoms_analytics, medications, medications_adherence, profile, physician
 
 # Startup
 init_db()
@@ -91,7 +91,7 @@ def root(request: Request):
     if _get_authenticated_physician(request):
         return RedirectResponse(url="/physician", status_code=303)
     if _get_authenticated_user(request):
-        return RedirectResponse(url="/symptoms/calendar", status_code=303)
+        return RedirectResponse(url="/symptoms/chart", status_code=303)
     return """<!DOCTYPE html>
 <html>
 <head>
@@ -147,5 +147,6 @@ app.include_router(auth.router)
 app.include_router(symptoms.router)
 app.include_router(symptoms_analytics.router)
 app.include_router(medications.router)
+app.include_router(medications_adherence.router)
 app.include_router(profile.router)
 app.include_router(physician.router)

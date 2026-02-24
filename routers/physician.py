@@ -326,7 +326,7 @@ def physician_switch(request: Request, patient_id: int):
         return RedirectResponse(url="/physician/login", status_code=303)
     if not _physician_owns_patient(physician["id"], patient_id):
         return RedirectResponse(url="/physician", status_code=303)
-    resp = RedirectResponse(url="/symptoms/calendar", status_code=303)
+    resp = RedirectResponse(url="/symptoms/chart", status_code=303)
     resp.set_cookie(
         PHYSICIAN_CTX_COOKIE,
         str(patient_id),

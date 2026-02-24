@@ -160,10 +160,10 @@ def _nav_bar(active: str = "") -> str:
         '<span style="font-weight:800; color:#fff; font-size:15px; flex-shrink:0; margin-right:8px;">'
         'Symptom Tracker</span>'
         '<div class="nav-desktop-links">'
+        + dlnk("/symptoms/chart", "Health Report", "chart")
         + dlnk("/symptoms/calendar", "Calendar", "calendar")
         + dlnk("/symptoms", "List", "list")
-        + dlnk("/symptoms/chart", "Chart", "chart")
-        + dlnk("/medications", "Meds", "meds")
+        + dlnk("/medications/today", "Meds", "meds")
         + '</div>'
         '<div class="nav-desktop-actions">'
         '<a href="/symptoms/new" style="background:#fff; color:#1e3a8a; text-decoration:none;'
@@ -185,10 +185,10 @@ def _nav_bar(active: str = "") -> str:
         '</div>'
         # ── Mobile dropdown ───────────────────────────────────────────────
         '<div id="nav-menu">'
+        + mlnk("/symptoms/chart", "Health Report", "chart")
         + mlnk("/symptoms/calendar", "Calendar", "calendar")
         + mlnk("/symptoms", "List", "list")
-        + mlnk("/symptoms/chart", "Chart", "chart")
-        + mlnk("/medications", "Meds", "meds")
+        + mlnk("/medications/today", "Meds", "meds")
         + mlnk("/profile", "Profile", "profile")
         + '<div style="display:flex; gap:8px; flex-wrap:wrap; padding:12px 0 4px;">'
         '<a href="/symptoms/new" style="background:#fff; color:#1e3a8a; text-decoration:none;'
@@ -248,9 +248,9 @@ PAGE_STYLE = """
     .back:hover { text-decoration: underline; }
     .form-group { margin-bottom: 20px; }
     label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
-    input[type=text], input[type=password], input[type=date], input[type=datetime-local], textarea { width: 100%; box-sizing: border-box; border: 1px solid #d1d5db;
+    input[type=text], input[type=password], input[type=email], input[type=date], input[type=datetime-local], textarea { width: 100%; box-sizing: border-box; border: 1px solid #d1d5db;
       border-radius: 6px; padding: 8px 10px; font-size: 15px; font-family: inherit; }
-    input[type=text]:focus, input[type=password]:focus, input[type=date]:focus, input[type=datetime-local]:focus, textarea:focus { outline: 2px solid #3b82f6; border-color: transparent; }
+    input[type=text]:focus, input[type=password]:focus, input[type=email]:focus, input[type=date]:focus, input[type=datetime-local]:focus, textarea:focus { outline: 2px solid #3b82f6; border-color: transparent; }
     .slider-row { display: flex; align-items: center; gap: 14px; }
     input[type=range] { flex: 1; accent-color: #3b82f6; height: 6px; cursor: pointer; }
     .sev-badge { width: 42px; height: 42px; border-radius: 50%; color: #fff; font-weight: 700;
