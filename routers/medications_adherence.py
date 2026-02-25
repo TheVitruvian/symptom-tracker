@@ -149,28 +149,39 @@ def medications_today():
                 # PRN
                 prn_taken = [r for r in dose_rows if r["schedule_id"] == sid and r["status"] == "taken"]
                 prn_count = len(prn_taken)
-                prn_label = f"{prn_count} dose{'s' if prn_count != 1 else ''} logged today"
+                prn_word = "dose" if prn_count == 1 else "doses"
                 cards_html += f"""
-        <div class="card" style="margin-bottom:10px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-            <div>
-              <span style="font-weight:700;font-size:15px;">{sname}</span>
-              {f'<span style="font-size:13px;color:#7c3aed;margin-left:6px;">{sdose}</span>' if sched["dose"] else ""}
-              <span style="font-size:12px;color:#9ca3af;margin-left:8px;">PRN</span>
+        <div class="card dose-card">
+          <div class="dose-row">
+            <div class="dose-main">
+              <div>
+                <span style="font-weight:700;font-size:15px;">{sname}</span>
+                {f'<span style="font-size:13px;color:#7c3aed;margin-left:6px;">{sdose}</span>' if sched["dose"] else ""}
+                <span style="font-size:12px;color:#9ca3af;margin-left:8px;">PRN</span>
+              </div>
+              <div class="dose-chip dose-chip-neutral">Logged today: {prn_count} {prn_word}</div>
             </div>
-            <div style="display:flex;align-items:center;gap:10px;">
-              <span style="font-size:13px;color:#6b7280;">{prn_label}</span>
-              <form method="post" action="/medications/doses/take"
-                style="display:flex;align-items:center;gap:6px;margin:0;">
+            <div class="dose-actions">
+              <form method="post" action="/medications/doses/take" style="margin:0;">
                 <input type="hidden" name="schedule_id" value="{sid}">
                 <input type="hidden" name="scheduled_date" value="{day_str}">
                 <input type="hidden" name="dose_num" value="{prn_count + 1}">
                 <input type="hidden" name="redirect_to" value="/medications/today">
-                <input type="time" name="taken_time" data-date="{day_str}" class="dose-time"
-                  style="border:1px solid #d1d5db;border-radius:6px;padding:4px 6px;
-                  font-size:13px;font-family:inherit;width:108px;">
-                <button type="submit" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:13px;cursor:pointer;font-family:inherit;">+ Log dose</button>
+                <button type="submit" class="dose-btn dose-btn-primary">+ Log now</button>
               </form>
+              <details class="dose-more">
+                <summary>More options</summary>
+                <div class="dose-more-actions">
+                  <form method="post" action="/medications/doses/take" class="dose-time-form">
+                    <input type="hidden" name="schedule_id" value="{sid}">
+                    <input type="hidden" name="scheduled_date" value="{day_str}">
+                    <input type="hidden" name="dose_num" value="{prn_count + 1}">
+                    <input type="hidden" name="redirect_to" value="/medications/today">
+                    <input type="time" name="taken_time" data-date="{day_str}" class="dose-time dose-time-input">
+                    <button type="submit" class="dose-btn dose-btn-secondary">Log with time</button>
+                  </form>
+                </div>
+              </details>
             </div>
           </div>
         </div>"""
@@ -184,57 +195,69 @@ def medications_today():
                     if status == "taken":
                         t = record["taken_at"][11:16] if record["taken_at"] else ""
                         status_html = (
-                            f'<span style="color:#15803d;font-weight:700;">&#10003; Taken{f" at {t}" if t else ""}</span>'
+                            f'<div class="dose-chip dose-chip-taken">&#10003; Taken{f" at {t}" if t else ""}</div>'
                             f'<form method="post" action="/medications/doses/undo" style="margin:0;">'
                             f'<input type="hidden" name="schedule_id" value="{sid}">'
                             f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                             f'<input type="hidden" name="dose_num" value="{dn}">'
                             f'<input type="hidden" name="redirect_to" value="/medications/today">'
-                            f'<button type="submit" style="background:none;border:1px solid #d1d5db;border-radius:6px;padding:3px 10px;font-size:12px;color:#6b7280;cursor:pointer;font-family:inherit;">Undo</button>'
+                            f'<button type="submit" class="dose-btn dose-btn-secondary">Undo</button>'
                             f'</form>'
                         )
                     else:
                         status_html = (
-                            f'<span style="color:#b91c1c;font-weight:700;">&#10007; Missed</span>'
+                            f'<div class="dose-chip dose-chip-missed">&#10007; Missed</div>'
                             f'<form method="post" action="/medications/doses/undo" style="margin:0;">'
                             f'<input type="hidden" name="schedule_id" value="{sid}">'
                             f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                             f'<input type="hidden" name="dose_num" value="{dn}">'
                             f'<input type="hidden" name="redirect_to" value="/medications/today">'
-                            f'<button type="submit" style="background:none;border:1px solid #d1d5db;border-radius:6px;padding:3px 10px;font-size:12px;color:#6b7280;cursor:pointer;font-family:inherit;">Undo</button>'
+                            f'<button type="submit" class="dose-btn dose-btn-secondary">Undo</button>'
                             f'</form>'
                         )
                 else:
                     status_html = (
-                        f'<form method="post" action="/medications/doses/take"'
-                        f' style="display:flex;align-items:center;gap:6px;margin:0;">'
+                        f'<div class="dose-chip dose-chip-pending">Pending</div>'
+                        f'<form method="post" action="/medications/doses/take" style="margin:0;">'
                         f'<input type="hidden" name="schedule_id" value="{sid}">'
                         f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                         f'<input type="hidden" name="dose_num" value="{dn}">'
                         f'<input type="hidden" name="redirect_to" value="/medications/today">'
-                        f'<input type="time" name="taken_time" data-date="{day_str}" class="dose-time"'
-                        f' style="border:1px solid #d1d5db;border-radius:6px;padding:4px 6px;'
-                        f'font-size:13px;font-family:inherit;width:108px;">'
-                        f'<button type="submit" style="background:#15803d;color:#fff;border:none;border-radius:6px;padding:5px 10px;font-size:13px;cursor:pointer;font-family:inherit;">Take</button>'
+                        f'<button type="submit" class="dose-btn dose-btn-primary">Take now</button>'
+                        f'</form>'
+                        f'<details class="dose-more">'
+                        f'<summary>More options</summary>'
+                        f'<div class="dose-more-actions">'
+                        f'<form method="post" action="/medications/doses/take" class="dose-time-form">'
+                        f'<input type="hidden" name="schedule_id" value="{sid}">'
+                        f'<input type="hidden" name="scheduled_date" value="{day_str}">'
+                        f'<input type="hidden" name="dose_num" value="{dn}">'
+                        f'<input type="hidden" name="redirect_to" value="/medications/today">'
+                        f'<input type="time" name="taken_time" data-date="{day_str}" class="dose-time dose-time-input">'
+                        f'<button type="submit" class="dose-btn dose-btn-secondary">Take with time</button>'
                         f'</form>'
                         f'<form method="post" action="/medications/doses/miss" style="margin:0;">'
                         f'<input type="hidden" name="schedule_id" value="{sid}">'
                         f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                         f'<input type="hidden" name="dose_num" value="{dn}">'
                         f'<input type="hidden" name="redirect_to" value="/medications/today">'
-                        f'<button type="submit" style="background:none;border:1px solid #d1d5db;border-radius:6px;padding:5px 10px;font-size:13px;color:#6b7280;cursor:pointer;font-family:inherit;">Miss</button>'
+                        f'<button type="submit" class="dose-btn dose-btn-ghost">Mark missed</button>'
                         f'</form>'
+                        f'</div>'
+                        f'</details>'
                     )
 
                 cards_html += f"""
-        <div class="card" style="margin-bottom:10px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
-            <div>
-              <span style="font-weight:700;font-size:15px;">{sname}</span>
-              {f'<span style="font-size:13px;color:#7c3aed;margin-left:6px;">{sdose}</span>' if sched["dose"] else ""}
-              <span style="font-size:12px;color:#9ca3af;margin-left:8px;">{dlabel}</span>
+        <div class="card dose-card">
+          <div class="dose-row">
+            <div class="dose-main">
+              <div>
+                <span style="font-weight:700;font-size:15px;">{sname}</span>
+                {f'<span style="font-size:13px;color:#7c3aed;margin-left:6px;">{sdose}</span>' if sched["dose"] else ""}
+                <span style="font-size:12px;color:#9ca3af;margin-left:8px;">{dlabel}</span>
+              </div>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div class="dose-actions">
               {status_html}
             </div>
           </div>
@@ -257,7 +280,40 @@ def medications_today():
 
     return f"""<!DOCTYPE html>
 <html>
-<head>{PAGE_STYLE}<title>Today's Doses</title></head>
+<head>{PAGE_STYLE}<title>Today's Doses</title>
+  <style>
+    .dose-card {{ margin-bottom:10px; }}
+    .dose-row {{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; }}
+    .dose-main {{ display:flex; flex-direction:column; gap:8px; min-width:230px; }}
+    .dose-actions {{ display:flex; flex-direction:column; align-items:flex-end; gap:8px; }}
+    .dose-chip {{ font-size:13px; font-weight:700; border-radius:999px; padding:5px 10px; line-height:1.2; }}
+    .dose-chip-taken {{ background:#dcfce7; color:#166534; border:1px solid #86efac; }}
+    .dose-chip-missed {{ background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }}
+    .dose-chip-pending {{ background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }}
+    .dose-chip-neutral {{ background:#f3f4f6; color:#374151; border:1px solid #e5e7eb; }}
+    .dose-btn {{ min-height:40px; border-radius:8px; padding:9px 14px; font-size:14px; cursor:pointer; font-family:inherit; font-weight:600; }}
+    .dose-btn-primary {{ background:#15803d; color:#fff; border:none; }}
+    .dose-btn-primary:hover {{ background:#166534; }}
+    .dose-btn-secondary {{ background:#fff; color:#374151; border:1px solid #d1d5db; }}
+    .dose-btn-secondary:hover {{ background:#f9fafb; }}
+    .dose-btn-ghost {{ background:#fff; color:#b91c1c; border:1px solid #fca5a5; }}
+    .dose-btn-ghost:hover {{ background:#fff1f2; }}
+    .dose-more {{ width:100%; max-width:340px; text-align:right; }}
+    .dose-more summary {{ cursor:pointer; font-size:12px; color:#6b7280; user-select:none; }}
+    .dose-more-actions {{ margin-top:8px; display:flex; flex-direction:column; gap:8px; align-items:flex-end; }}
+    .dose-time-form {{ display:flex; gap:8px; align-items:center; margin:0; flex-wrap:wrap; justify-content:flex-end; }}
+    .dose-time-input {{ border:1px solid #d1d5db; border-radius:8px; padding:9px 10px; font-size:14px; font-family:inherit; min-height:40px; width:132px; }}
+    @media (max-width: 640px) {{
+      .dose-main {{ min-width:0; width:100%; }}
+      .dose-actions {{ width:100%; align-items:stretch; }}
+      .dose-more {{ max-width:none; text-align:left; }}
+      .dose-more-actions {{ align-items:stretch; }}
+      .dose-time-form {{ justify-content:stretch; }}
+      .dose-time-input {{ width:100%; }}
+      .dose-btn {{ width:100%; }}
+    }}
+  </style>
+</head>
 <body>
   {_nav_bar('meds')}
   <div class="container">

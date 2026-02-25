@@ -527,6 +527,7 @@ def symptoms_chart():
         }}
         bar.appendChild(btn);
       }});
+
       medMeta.forEach(({{ name, color, annotationIds }}) => {{
         const btn = document.createElement("button");
         const icon = document.createElement("span");
@@ -776,8 +777,13 @@ def symptoms_calendar():
     .day-num { font-size: 12px; font-weight: 600; color: #374151; }
     .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-left: 3px;
       vertical-align: middle; }
+    .dot.dot-interactive { cursor: pointer; }
     .dot:hover { outline: 2px solid #11182733; outline-offset: 1px; }
     .count { font-size: 11px; color: #6b7280; margin-left: 2px; vertical-align: middle; }
+    .cal-legend { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin: 2px 0 10px; }
+    .cal-legend-item { font-size:12px; color:#4b5563; display:flex; align-items:center; gap:6px; }
+    .cal-legend-dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+    #cal-loading { color:#6b7280; font-size:14px; margin: 8px 0 12px; }
     #dot-tooltip { display:none; position:fixed; z-index:200; pointer-events:none;
       background:#111827; color:#fff; border-radius:8px; padding:8px 10px;
       font-size:12px; line-height:1.45; max-width:260px;
@@ -791,7 +797,7 @@ def symptoms_calendar():
     .detail-notes { font-size: 13px; color: #555; margin: 6px 0 0; }
     @media (max-width: 640px) {
       .cal-grid td { height: 52px; min-height: 52px; padding: 3px 4px; }
-      .count { display: none; }
+      .count { font-size: 10px; margin-left: 1px; }
     }
   </style>
 </head>
@@ -799,12 +805,24 @@ def symptoms_calendar():
 """ + _nav_bar('calendar') + """
   <div class="container" style="max-width:700px;">
     <h1>Symptom Calendar</h1>
+    <div id="cal-loading">Loading calendar...</div>
+    <div id="cal-error" class="alert" style="display:none;">
+      Unable to load symptom calendar right now.
+      <button type="button" onclick="loadData()"
+        style="margin-left:8px;background:#fff;border:1px solid #fca5a5;border-radius:6px;padding:4px 8px;
+        color:#b91c1c;cursor:pointer;font-family:inherit;">Retry</button>
+    </div>
     <div class="cal-nav">
       <button id="prev-btn" onclick="shiftMonth(-1)">&#8592;</button>
       <span class="cal-month" id="month-label"></span>
       <button id="next-btn" onclick="shiftMonth(1)">&#8594;</button>
     </div>
-    <table class="cal-grid">
+    <div class="cal-legend" aria-hidden="true">
+      <span class="cal-legend-item"><span class="cal-legend-dot" style="background:#f97316;"></span>Symptoms</span>
+      <span class="cal-legend-item"><span class="cal-legend-dot" style="background:#a855f7;"></span>Medications</span>
+      <span class="cal-legend-item"><span style="font-weight:700;">xN</span>entries that day</span>
+    </div>
+    <table id="cal-table" class="cal-grid" style="display:none;">
       <thead>
         <tr>
           <th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th>
@@ -839,6 +857,18 @@ def symptoms_calendar():
 
     function pad(n) { return String(n).padStart(2, "0"); }
     const dotTip = document.getElementById("dot-tooltip");
+    let pinnedDot = null;
+    function eventPoint(e) {
+      if (e && typeof e.clientX === "number" && typeof e.clientY === "number") {
+        return { x: e.clientX, y: e.clientY };
+      }
+      const t = e && e.currentTarget ? e.currentTarget : null;
+      if (t && t.getBoundingClientRect) {
+        const r = t.getBoundingClientRect();
+        return { x: r.left + (r.width / 2), y: r.top + (r.height / 2) };
+      }
+      return { x: 40, y: 40 };
+    }
 
     function showDotTip(e, html) {
       if (!html) return;
@@ -849,13 +879,14 @@ def symptoms_calendar():
 
     function moveDotTip(e) {
       if (dotTip.style.display !== "block") return;
+      const point = eventPoint(e);
       const pad = 14;
       const w = dotTip.offsetWidth || 240;
       const h = dotTip.offsetHeight || 56;
-      let left = e.clientX + pad;
-      let top = e.clientY + pad;
-      if (left + w > window.innerWidth - 8) left = e.clientX - w - pad;
-      if (top + h > window.innerHeight - 8) top = e.clientY - h - pad;
+      let left = point.x + pad;
+      let top = point.y + pad;
+      if (left + w > window.innerWidth - 8) left = point.x - w - pad;
+      if (top + h > window.innerHeight - 8) top = point.y - h - pad;
       dotTip.style.left = Math.max(8, left) + "px";
       dotTip.style.top = Math.max(8, top) + "px";
     }
@@ -887,10 +918,50 @@ def symptoms_calendar():
     }
 
     function bindDotTip(el, html) {
-      el.addEventListener("mouseenter", (ev) => showDotTip(ev, html));
-      el.addEventListener("mousemove", moveDotTip);
-      el.addEventListener("mouseleave", hideDotTip);
+      el.classList.add("dot-interactive");
+      el.setAttribute("role", "button");
+      el.setAttribute("tabindex", "0");
+      el.setAttribute("aria-label", "Show details");
+      el.addEventListener("mouseenter", (ev) => { if (!pinnedDot) showDotTip(ev, html); });
+      el.addEventListener("mousemove", (ev) => { if (!pinnedDot) moveDotTip(ev); });
+      el.addEventListener("mouseleave", () => { if (!pinnedDot) hideDotTip(); });
+      el.addEventListener("focus", (ev) => showDotTip(ev, html));
+      el.addEventListener("blur", () => { if (!pinnedDot) hideDotTip(); });
+      el.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (pinnedDot === el) {
+          pinnedDot = null;
+          hideDotTip();
+          return;
+        }
+        pinnedDot = el;
+        showDotTip(ev, html);
+      });
+      el.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter" && ev.key !== " ") return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (pinnedDot === el) {
+          pinnedDot = null;
+          hideDotTip();
+        } else {
+          pinnedDot = el;
+          showDotTip(ev, html);
+        }
+      });
     }
+    document.addEventListener("click", (ev) => {
+      if (!pinnedDot) return;
+      if (ev.target === pinnedDot) return;
+      pinnedDot = null;
+      hideDotTip();
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape" || !pinnedDot) return;
+      pinnedDot = null;
+      hideDotTip();
+    });
 
     let byDate = {};     // "YYYY-MM-DD" -> [{id,name,severity,notes,timestamp,end_time}]
     let medsByDate = {}; // "YYYY-MM-DD" -> [{id,name,dose,notes,timestamp}]
@@ -925,32 +996,52 @@ def symptoms_calendar():
     }
 
     async function loadData() {
-      const [sympResp, medResp] = await Promise.all([fetch("/api/symptoms"), fetch("/api/medications")]);
-      const [sympData, medData] = await Promise.all([sympResp.json(), medResp.json()]);
-      byDate = {};
-      for (const s of sympData.symptoms) {
-        for (const date of expandSymptomDatesCal(s)) {
-          if (!byDate[date]) byDate[date] = [];
-          byDate[date].push(s);
+      const loading = document.getElementById("cal-loading");
+      const error = document.getElementById("cal-error");
+      const table = document.getElementById("cal-table");
+      loading.style.display = "block";
+      error.style.display = "none";
+      table.style.display = "none";
+      document.getElementById("day-detail").style.display = "none";
+      pinnedDot = null;
+      hideDotTip();
+      try {
+        const [sympResp, medResp] = await Promise.all([fetch("/api/symptoms"), fetch("/api/medications")]);
+        if (!sympResp.ok || !medResp.ok) throw new Error("Calendar API request failed");
+        const [sympData, medData] = await Promise.all([sympResp.json(), medResp.json()]);
+        byDate = {};
+        for (const s of sympData.symptoms) {
+          for (const date of expandSymptomDatesCal(s)) {
+            if (!byDate[date]) byDate[date] = [];
+            byDate[date].push(s);
+          }
         }
+        medsByDate = {};
+        for (const m of medData.medications) {
+          const date = m.timestamp.slice(0, 10);
+          if (!medsByDate[date]) medsByDate[date] = [];
+          medsByDate[date].push(m);
+        }
+        const now = new Date();
+        curYear = now.getFullYear();
+        curMonth = now.getMonth();  // 0-indexed
+        selectedDate = null;
+        table.style.display = "";
+        renderCalendar();
+        // Default selection: today
+        const todayStr = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+        onDayClick(todayStr);
+      } catch (err) {
+        console.error(err);
+        error.style.display = "block";
+      } finally {
+        loading.style.display = "none";
       }
-      medsByDate = {};
-      for (const m of medData.medications) {
-        const date = m.timestamp.slice(0, 10);
-        if (!medsByDate[date]) medsByDate[date] = [];
-        medsByDate[date].push(m);
-      }
-      const now = new Date();
-      curYear = now.getFullYear();
-      curMonth = now.getMonth();  // 0-indexed
-      selectedDate = null;
-      renderCalendar();
-      // Default selection: today
-      const todayStr = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
-      onDayClick(todayStr);
     }
 
     function shiftMonth(delta) {
+      pinnedDot = null;
+      hideDotTip();
       curMonth += delta;
       if (curMonth > 11) { curMonth = 0; curYear++; }
       if (curMonth < 0)  { curMonth = 11; curYear--; }
@@ -1037,6 +1128,8 @@ def symptoms_calendar():
     }
 
     function onDayClick(dateStr) {
+      pinnedDot = null;
+      hideDotTip();
       const detail = document.getElementById("day-detail");
       if (selectedDate === dateStr) {
         // Toggle off
