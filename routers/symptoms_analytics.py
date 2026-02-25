@@ -88,6 +88,78 @@ def symptoms_chart():
   {PAGE_STYLE}
   <title>Health Report</title>
   <style>
+  .report-shell {{ max-width: 860px; }}
+  .report-header {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }}
+  .section-title {{
+    margin: 20px 0 10px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #111827;
+  }}
+  .section-card {{ margin-top: 20px; }}
+  .controls-row {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 0;
+  }}
+  .control-group {{ display: flex; align-items: center; gap: 6px; }}
+  .control-label {{ font-size: 13px; font-weight: 600; color: #555; }}
+  .control-input {{
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 13px;
+    font-family: inherit;
+  }}
+  .preset-row {{ display: flex; gap: 6px; }}
+  .btn-control {{
+    border: 1px solid #d1d5db;
+    background: #fff;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+  }}
+  .btn-print {{
+    border: 1px solid #7c3aed;
+    background: #7c3aed;
+    color: #fff;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+  }}
+  .btn-smooth {{
+    border: 1px solid #1e3a8a;
+    background: #1e3a8a;
+    color: #fff;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+  }}
+  .btn-bucket {{
+    border: 1px solid #0f766e;
+    background: #0f766e;
+    color: #fff;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+  }}
+  .report-empty {{ margin-top: 28px; }}
 @media print {{
   nav, .screen-only {{ display: none !important; }}
   .print-only        {{ display: block !important; }}
@@ -106,48 +178,44 @@ def symptoms_chart():
 </head>
 <body>
   {_nav_bar('chart')}
-  <div class="container" style="max-width:860px;">
+  <div class="container report-shell">
     <div class="print-only" style="display:none; border-bottom:2px solid #1e3a8a; padding-bottom:12px; margin-bottom:16px;">
       <h2 style="margin:0 0 6px; font-size:18pt; color:#1e3a8a;">Health Report</h2>
       <p style="margin:2px 0; font-size:11pt;"><strong>Patient:</strong> {patient_name}</p>
       <p style="margin:2px 0; font-size:11pt;"><strong>Period:</strong> <span id="print-date-range"></span></p>
       <p style="margin:2px 0; font-size:10pt; color:#6b7280;">Generated <span id="print-generated-date"></span></p>
     </div>
-    <div class="screen-only" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+    <div class="screen-only report-header">
       <h1 style="margin:0;">Health Report</h1>
-      <button onclick="printReport()" style="border:1px solid #7c3aed; background:#7c3aed; color:#fff; border-radius:6px; padding:6px 12px; font-size:13px; cursor:pointer; font-family:inherit;">Print Report</button>
+      <button class="btn-print" onclick="printReport()">Print Report</button>
     </div>
 
-    <div id="no-data" class="empty" style="display:none; margin-top:28px;">
+    <div id="no-data" class="empty report-empty" style="display:none;">
       Not enough data yet &mdash; log at least 2 symptoms first.
     </div>
 
-    <div id="insights-wrapper" class="card" style="display:none; margin-top:20px; padding:20px;"></div>
+    <div id="insights-wrapper" class="card section-card" style="display:none; padding:20px;"></div>
 
-    <h2 class="screen-only" style="margin:20px 0 10px; font-size:18px; font-weight:700; color:#111827;">Symptom Trend Graph</h2>
-
-    <div class="screen-only" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:0;">
-      <div style="display:flex; align-items:center; gap:6px;">
-        <label for="range-from" style="font-size:13px; font-weight:600; color:#555;">From</label>
-        <input type="date" id="range-from" onchange="render()"
-          style="border:1px solid #d1d5db; border-radius:6px; padding:5px 8px; font-size:13px; font-family:inherit;">
+    <div id="chart-wrapper" class="card section-card" style="display:none; padding:24px;">
+      <h2 class="screen-only section-title" style="margin-top:0;">Symptom Trend Graph</h2>
+      <div class="screen-only controls-row" style="margin-bottom:14px;">
+        <div class="control-group">
+          <label for="range-from" class="control-label">From</label>
+          <input type="date" id="range-from" onchange="render()" class="control-input">
+        </div>
+        <div class="control-group">
+          <label for="range-to" class="control-label">To</label>
+          <input type="date" id="range-to" onchange="render()" class="control-input">
+        </div>
+        <div class="preset-row">
+          <button class="btn-control" onclick="setPreset(7)">7d</button>
+          <button class="btn-control" onclick="setPreset(30)">30d</button>
+          <button class="btn-control" onclick="setPreset(90)">90d</button>
+          <button class="btn-control" onclick="setPresetAll()">All</button>
+        </div>
+        <button id="smooth-btn" class="btn-smooth" onclick="toggleSmooth()" data-help="Smooth averages symptom severity over recent days to reduce short-term noise. Turn it off to see raw day-to-day changes.">Smooth</button>
+        <button id="bucket-btn" class="btn-bucket" onclick="toggleBucket()" data-help="Daily shows each day separately. Weekly groups data into week buckets (Mon-Sun) so overall trends are easier to read.">Daily</button>
       </div>
-      <div style="display:flex; align-items:center; gap:6px;">
-        <label for="range-to" style="font-size:13px; font-weight:600; color:#555;">To</label>
-        <input type="date" id="range-to" onchange="render()"
-          style="border:1px solid #d1d5db; border-radius:6px; padding:5px 8px; font-size:13px; font-family:inherit;">
-      </div>
-      <div style="display:flex; gap:6px;">
-        <button onclick="setPreset(7)"  style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">7d</button>
-        <button onclick="setPreset(30)" style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">30d</button>
-        <button onclick="setPreset(90)" style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">90d</button>
-        <button onclick="setPresetAll()" style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">All</button>
-      </div>
-      <button id="smooth-btn" onclick="toggleSmooth()" data-help="Smooth averages symptom severity over recent days to reduce short-term noise. Turn it off to see raw day-to-day changes." style="border:1px solid #1e3a8a; background:#1e3a8a; color:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">Smooth</button>
-      <button id="bucket-btn" onclick="toggleBucket()" data-help="Daily shows each day separately. Weekly groups data into week buckets (Mon-Sun) so overall trends are easier to read." style="border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">Daily</button>
-    </div>
-
-    <div id="chart-wrapper" class="card" style="display:none; margin-top:20px; padding:24px;">
       <div id="toggle-bar" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px;"></div>
       <canvas id="symptomChart"></canvas>
     </div>
@@ -317,6 +385,7 @@ def symptoms_chart():
     }}
 
     let _allSymp = [], _allMeds = [], _adherenceData = {{}}, _chart = null, _smoothed = true, _timeBucket = "daily";
+    let _patternsFrom = "", _patternsTo = "", _patternsInitialized = false;
 
     async function init() {{
       bindControlTips();
@@ -369,6 +438,45 @@ def symptoms_chart():
         document.getElementById("range-to").value = dates[dates.length - 1];
       }}
       render();
+    }}
+
+    function _dataDateBounds() {{
+      const dates = [
+        ..._allSymp.map(s => s.timestamp.slice(0, 10)),
+        ..._allSymp.map(s => (s.end_time || s.timestamp).slice(0, 10)),
+        ..._allMeds.map(m => m.timestamp.slice(0, 10)),
+      ].sort();
+      if (!dates.length) return {{ min: "", max: "" }};
+      return {{ min: dates[0], max: dates[dates.length - 1] }};
+    }}
+
+    function setPatternsPreset(days) {{
+      const bounds = _dataDateBounds();
+      if (!bounds.max) return;
+      const to = new Date(bounds.max + "T00:00:00");
+      const from = new Date(+to - (days - 1) * 86400000);
+      _patternsFrom = from.toISOString().slice(0, 10);
+      _patternsTo = bounds.max;
+      renderInsights();
+    }}
+
+    function setPatternsAll() {{
+      const bounds = _dataDateBounds();
+      _patternsFrom = bounds.min;
+      _patternsTo = bounds.max;
+      renderInsights();
+    }}
+
+    function updatePatternsRange() {{
+      const fromEl = document.getElementById("patterns-from");
+      const toEl = document.getElementById("patterns-to");
+      if (!fromEl || !toEl) return;
+      let from = fromEl.value || "";
+      let to = toEl.value || "";
+      if (from && to && from > to) [from, to] = [to, from];
+      _patternsFrom = from;
+      _patternsTo = to;
+      renderInsights();
     }}
 
     function toggleSmooth() {{
@@ -475,11 +583,16 @@ def symptoms_chart():
         const d = m.timestamp.slice(0, 10);
         return (!from || d >= from) && (!to || d <= to);
       }});
+      if (!_patternsInitialized) {{
+        _patternsFrom = from;
+        _patternsTo = to;
+        _patternsInitialized = true;
+      }}
       const sampleInfo = buildSampleInfo(syms);
       renderChart(syms, meds);
       renderCorrelations(from, to, sampleInfo);
       renderMedCorrelations(from, to, sampleInfo);
-      renderInsights(from, to);
+      renderInsights();
     }}
 
     function renderChart(symptoms, medications) {{
@@ -691,10 +804,10 @@ def symptoms_chart():
       }}
     }}
 
-    async function renderInsights(from, to) {{
+    async function renderInsights() {{
       const params = new URLSearchParams();
-      if (from) params.set("from_date", from);
-      if (to)   params.set("to_date", to);
+      if (_patternsFrom) params.set("from_date", _patternsFrom);
+      if (_patternsTo)   params.set("to_date", _patternsTo);
       const [sr, mr] = await Promise.all([
         fetch(`/api/symptoms/correlations?${{params}}`),
         fetch(`/api/correlations/med-symptom?${{params}}`),
@@ -750,9 +863,31 @@ def symptoms_chart():
       }}
 
       const wrapper = document.getElementById("insights-wrapper");
-      if (!insights.length) {{ wrapper.style.display = "none"; return; }}
       wrapper.style.display = "block";
-      let html = `<h2 style="margin:0 0 12px; font-size:18px; font-weight:700; color:#111827;">Key Patterns</h2>`;
+      let html = `<h2 class="section-title" style="margin-top:0;">Key Patterns</h2>`;
+      html += `<div class="screen-only controls-row" style="margin-bottom:12px;">`
+           + `<div class="control-group">`
+           + `<label for="patterns-from" class="control-label">From</label>`
+           + `<input type="date" id="patterns-from" value="${{_patternsFrom}}" onchange="updatePatternsRange()"`
+           + ` class="control-input">`
+           + `</div>`
+           + `<div class="control-group">`
+           + `<label for="patterns-to" class="control-label">To</label>`
+           + `<input type="date" id="patterns-to" value="${{_patternsTo}}" onchange="updatePatternsRange()"`
+           + ` class="control-input">`
+           + `</div>`
+           + `<div class="preset-row">`
+           + `<button class="btn-control" onclick="setPatternsPreset(7)">7d</button>`
+           + `<button class="btn-control" onclick="setPatternsPreset(30)">30d</button>`
+           + `<button class="btn-control" onclick="setPatternsPreset(90)">90d</button>`
+           + `<button class="btn-control" onclick="setPatternsAll()">All</button>`
+           + `</div>`
+           + `</div>`;
+      if (!insights.length) {{
+        html += `<p class="empty" style="margin:6px 0 0;">No strong patterns found for this date range.</p>`;
+        wrapper.innerHTML = html;
+        return;
+      }}
       html += `<div style="display:flex;flex-direction:column;gap:10px;">`;
       for (const ins of insights) {{
         html += `<div style="padding:10px 14px;background:${{ins.bg}};border:1px solid ${{ins.border}};`
