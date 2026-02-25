@@ -776,7 +776,12 @@ def symptoms_calendar():
     .day-num { font-size: 12px; font-weight: 600; color: #374151; }
     .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-left: 3px;
       vertical-align: middle; }
+    .dot:hover { outline: 2px solid #11182733; outline-offset: 1px; }
     .count { font-size: 11px; color: #6b7280; margin-left: 2px; vertical-align: middle; }
+    #dot-tooltip { display:none; position:fixed; z-index:200; pointer-events:none;
+      background:#111827; color:#fff; border-radius:8px; padding:8px 10px;
+      font-size:12px; line-height:1.45; max-width:260px;
+      box-shadow:0 6px 18px rgba(0,0,0,0.24); }
     #day-detail { display: none; margin-top: 20px; }
     #day-detail h3 { font-size: 16px; margin: 0 0 12px; color: #111; }
     .detail-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
@@ -812,6 +817,7 @@ def symptoms_calendar():
       <div id="detail-cards"></div>
     </div>
   </div>
+  <div id="dot-tooltip"></div>
   <script>
     const MONTHS = ["January","February","March","April","May","June",
                     "July","August","September","October","November","December"];
@@ -832,6 +838,59 @@ def symptoms_calendar():
     }
 
     function pad(n) { return String(n).padStart(2, "0"); }
+    const dotTip = document.getElementById("dot-tooltip");
+
+    function showDotTip(e, html) {
+      if (!html) return;
+      dotTip.innerHTML = html;
+      dotTip.style.display = "block";
+      moveDotTip(e);
+    }
+
+    function moveDotTip(e) {
+      if (dotTip.style.display !== "block") return;
+      const pad = 14;
+      const w = dotTip.offsetWidth || 240;
+      const h = dotTip.offsetHeight || 56;
+      let left = e.clientX + pad;
+      let top = e.clientY + pad;
+      if (left + w > window.innerWidth - 8) left = e.clientX - w - pad;
+      if (top + h > window.innerHeight - 8) top = e.clientY - h - pad;
+      dotTip.style.left = Math.max(8, left) + "px";
+      dotTip.style.top = Math.max(8, top) + "px";
+    }
+
+    function hideDotTip() {
+      dotTip.style.display = "none";
+    }
+
+    function symptomDotTip(entries) {
+      const byName = {};
+      for (const e of entries) {
+        if (!byName[e.name]) byName[e.name] = { count: 0, maxSev: 0 };
+        byName[e.name].count += 1;
+        byName[e.name].maxSev = Math.max(byName[e.name].maxSev, e.severity);
+      }
+      const rows = Object.entries(byName)
+        .sort((a, b) => b[1].maxSev - a[1].maxSev || b[1].count - a[1].count)
+        .slice(0, 3)
+        .map(([name, info]) => `${escHtml(name)} (${info.maxSev}/10${info.count > 1 ? `, ×${info.count}` : ""})`);
+      const more = Object.keys(byName).length > 3 ? `<br>+${Object.keys(byName).length - 3} more` : "";
+      return `<strong>Symptoms</strong><br>${rows.join("<br>")}${more}`;
+    }
+
+    function medsDotTip(entries) {
+      const names = [...new Set(entries.map(m => m.name))];
+      const rows = names.slice(0, 4).map(n => escHtml(n));
+      const more = names.length > 4 ? `<br>+${names.length - 4} more` : "";
+      return `<strong>Medications</strong><br>${rows.join("<br>")}${more}`;
+    }
+
+    function bindDotTip(el, html) {
+      el.addEventListener("mouseenter", (ev) => showDotTip(ev, html));
+      el.addEventListener("mousemove", moveDotTip);
+      el.addEventListener("mouseleave", hideDotTip);
+    }
 
     let byDate = {};     // "YYYY-MM-DD" -> [{id,name,severity,notes,timestamp,end_time}]
     let medsByDate = {}; // "YYYY-MM-DD" -> [{id,name,dose,notes,timestamp}]
@@ -884,7 +943,11 @@ def symptoms_calendar():
       const now = new Date();
       curYear = now.getFullYear();
       curMonth = now.getMonth();  // 0-indexed
+      selectedDate = null;
       renderCalendar();
+      // Default selection: today
+      const todayStr = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+      onDayClick(todayStr);
     }
 
     function shiftMonth(delta) {
@@ -941,6 +1004,8 @@ def symptoms_calendar():
             td.className = classes.trim();
 
             let inner = `<span class="day-num">${dayCount}</span>`;
+            const hasEntries = !!entries;
+            const hasMedEntries = !!medEntries;
             if (entries) {
               const maxSev = Math.max(...entries.map(e => e.severity));
               const color = sevColor(maxSev);
@@ -960,6 +1025,9 @@ def symptoms_calendar():
               td.addEventListener("click", () => onDayClick(dateStr));
             }
             td.innerHTML = inner;
+            const dots = td.querySelectorAll(".dot");
+            if (hasEntries && dots[0]) bindDotTip(dots[0], symptomDotTip(entries));
+            if (hasMedEntries && dots[hasEntries ? 1 : 0]) bindDotTip(dots[hasEntries ? 1 : 0], medsDotTip(medEntries));
             dayCount++;
           }
           tr.appendChild(td);

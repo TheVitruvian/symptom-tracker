@@ -7,6 +7,7 @@ from email.mime.text import MIMEText
 from time import time
 from typing import Optional
 
+import requests
 from fastapi import Request
 
 from config import (
@@ -173,30 +174,57 @@ def _set_physician_cookie(response, request: Request, username: str, password_ha
 
 
 def _send_reset_email(to_email: str, reset_url: str) -> bool:
-    """Send a password-reset email. Returns True on success, False if SMTP is not configured or fails."""
+    """Send a password-reset email via SMTP (preferred), fallback to Mailgun API."""
+    subject = "Reset your Symptom Tracker password"
+    text_body = (
+        f"Click the link below to reset your Symptom Tracker password (expires in 1 hour):\n\n"
+        f"{reset_url}\n\n"
+        "If you did not request a password reset, you can ignore this email."
+    )
+
+    # SMTP preferred path
     smtp_host = os.environ.get("SMTP_HOST", "")
     smtp_port = int(os.environ.get("SMTP_PORT", "587"))
     smtp_user = os.environ.get("SMTP_USER", "")
     smtp_pass = os.environ.get("SMTP_PASSWORD", "")
     smtp_from = os.environ.get("SMTP_FROM", smtp_user)
-    if not smtp_host or not smtp_user:
-        return False
-    msg = MIMEText(
-        f"Click the link below to reset your Symptom Tracker password (expires in 1 hour):\n\n"
-        f"{reset_url}\n\n"
-        "If you did not request a password reset, you can ignore this email."
-    )
-    msg["Subject"] = "Reset your Symptom Tracker password"
-    msg["From"] = smtp_from
-    msg["To"] = to_email
-    try:
-        with smtplib.SMTP(smtp_host, smtp_port) as s:
-            s.starttls()
-            s.login(smtp_user, smtp_pass)
-            s.sendmail(smtp_from, [to_email], msg.as_string())
-        return True
-    except Exception:
-        return False
+    if smtp_host and smtp_user and smtp_pass:
+        msg = MIMEText(text_body)
+        msg["Subject"] = subject
+        msg["From"] = smtp_from
+        msg["To"] = to_email
+        try:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as s:
+                s.starttls()
+                s.login(smtp_user, smtp_pass)
+                s.sendmail(smtp_from, [to_email], msg.as_string())
+            return True
+        except Exception:
+            pass
+
+    # Mailgun API fallback
+    mailgun_api_key = os.environ.get("MAILGUN_API_KEY", "")
+    mailgun_domain = os.environ.get("MAILGUN_DOMAIN", "")
+    mailgun_from = os.environ.get("MAILGUN_FROM", "")
+    if mailgun_api_key and mailgun_domain:
+        sender = mailgun_from or f"no-reply@{mailgun_domain}"
+        try:
+            resp = requests.post(
+                f"https://api.mailgun.net/v3/{mailgun_domain}/messages",
+                auth=("api", mailgun_api_key),
+                data={
+                    "from": sender,
+                    "to": [to_email],
+                    "subject": subject,
+                    "text": text_body,
+                },
+                timeout=15,
+            )
+            if 200 <= resp.status_code < 300:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def _physician_owns_patient(physician_id: int, patient_id: int) -> bool:
