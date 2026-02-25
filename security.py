@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import smtplib
@@ -18,6 +19,8 @@ from config import (
     SECRET_KEY,
 )
 from db import get_db
+
+logger = logging.getLogger(__name__)
 
 
 def _request_origin_host(request: Request) -> str:
@@ -200,7 +203,7 @@ def _send_reset_email(to_email: str, reset_url: str) -> bool:
                 s.sendmail(smtp_from, [to_email], msg.as_string())
             return True
         except Exception:
-            pass
+            logger.exception("SMTP password reset email send failed")
 
     # Mailgun API fallback
     mailgun_api_key = os.environ.get("MAILGUN_API_KEY", "")
@@ -222,8 +225,17 @@ def _send_reset_email(to_email: str, reset_url: str) -> bool:
             )
             if 200 <= resp.status_code < 300:
                 return True
+            logger.warning(
+                "Mailgun reset email send failed with status %s: %s",
+                resp.status_code,
+                (resp.text or "")[:200],
+            )
         except Exception:
-            pass
+            logger.exception("Mailgun API password reset email send failed")
+    else:
+        logger.warning(
+            "Password reset email not attempted: missing SMTP and Mailgun configuration"
+        )
     return False
 
 

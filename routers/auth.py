@@ -221,7 +221,12 @@ def forgot_password_post(request: Request, email: str = Form("")):
                 conn.commit()
             base = str(request.base_url).rstrip("/")
             reset_url = f"{base}/reset-password?token={token}"
-            _send_reset_email(email, reset_url)
+            sent_ok = _send_reset_email(email, reset_url)
+            if not sent_ok:
+                return RedirectResponse(
+                    url="/forgot-password?error=Unable+to+send+reset+email.+Please+try+again",
+                    status_code=303,
+                )
     return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
 
 
