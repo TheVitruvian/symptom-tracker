@@ -132,6 +132,9 @@ def login_get(request: Request, error: str = "", success: str = ""):
     <p style="margin-top:8px; font-size:13px; color:#6b7280;">
       No account yet? <a href="/signup" style="color:#3b82f6;">Sign up</a>
     </p>
+    <p style="margin-top:8px; font-size:13px; color:#6b7280;">
+      Are you a physician? <a href="/physician/login" style="color:#3b82f6;">Physician login</a>
+    </p>
   </div>
 </body>
 </html>

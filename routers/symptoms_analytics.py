@@ -113,9 +113,20 @@ def symptoms_chart():
       <p style="margin:2px 0; font-size:11pt;"><strong>Period:</strong> <span id="print-date-range"></span></p>
       <p style="margin:2px 0; font-size:10pt; color:#6b7280;">Generated <span id="print-generated-date"></span></p>
     </div>
-    <h1 class="screen-only">Health Report</h1>
+    <div class="screen-only" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <h1 style="margin:0;">Health Report</h1>
+      <button onclick="printReport()" style="border:1px solid #7c3aed; background:#7c3aed; color:#fff; border-radius:6px; padding:6px 12px; font-size:13px; cursor:pointer; font-family:inherit;">Print Report</button>
+    </div>
 
-    <div class="screen-only" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:12px;">
+    <div id="no-data" class="empty" style="display:none; margin-top:28px;">
+      Not enough data yet &mdash; log at least 2 symptoms first.
+    </div>
+
+    <div id="insights-wrapper" class="card" style="display:none; margin-top:20px; padding:20px;"></div>
+
+    <h2 class="screen-only" style="margin:20px 0 10px; font-size:18px; font-weight:700; color:#111827;">Symptom Trend Graph</h2>
+
+    <div class="screen-only" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:0;">
       <div style="display:flex; align-items:center; gap:6px;">
         <label for="range-from" style="font-size:13px; font-weight:600; color:#555;">From</label>
         <input type="date" id="range-from" onchange="render()"
@@ -126,31 +137,28 @@ def symptoms_chart():
         <input type="date" id="range-to" onchange="render()"
           style="border:1px solid #d1d5db; border-radius:6px; padding:5px 8px; font-size:13px; font-family:inherit;">
       </div>
-      <div style="display:flex; gap:4px;">
+      <div style="display:flex; gap:6px;">
         <button onclick="setPreset(7)"  style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">7d</button>
         <button onclick="setPreset(30)" style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">30d</button>
         <button onclick="setPreset(90)" style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">90d</button>
         <button onclick="setPresetAll()" style="border:1px solid #d1d5db; background:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">All</button>
       </div>
-      <button id="smooth-btn" onclick="toggleSmooth()" style="border:1px solid #1e3a8a; background:#1e3a8a; color:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">Smooth</button>
-      <button onclick="printReport()" style="border:1px solid #7c3aed; background:#7c3aed; color:#fff; border-radius:6px; padding:5px 12px; font-size:13px; cursor:pointer; font-family:inherit;">Print Report</button>
+      <button id="smooth-btn" onclick="toggleSmooth()" data-help="Smooth averages symptom severity over recent days to reduce short-term noise. Turn it off to see raw day-to-day changes." style="border:1px solid #1e3a8a; background:#1e3a8a; color:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">Smooth</button>
+      <button id="bucket-btn" onclick="toggleBucket()" data-help="Daily shows each day separately. Weekly groups data into week buckets (Mon-Sun) so overall trends are easier to read." style="border:1px solid #0f766e; background:#0f766e; color:#fff; border-radius:6px; padding:5px 10px; font-size:13px; cursor:pointer; font-family:inherit;">Daily</button>
     </div>
 
-    <div id="no-data" class="empty" style="display:none; margin-top:24px;">
-      Not enough data yet &mdash; log at least 2 symptoms first.
-    </div>
-
-    <div id="chart-wrapper" class="card" style="display:none; margin-top:16px; padding:24px;">
+    <div id="chart-wrapper" class="card" style="display:none; margin-top:20px; padding:24px;">
       <div id="toggle-bar" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px;"></div>
       <canvas id="symptomChart"></canvas>
     </div>
     <div id="med-tooltip" style="display:none; position:fixed; background:#1e3a8a; color:#fff;
       padding:6px 10px; border-radius:6px; font-size:13px; pointer-events:none; z-index:100;
       white-space:nowrap; box-shadow:0 2px 8px rgba(0,0,0,0.2); line-height:1.5;"></div>
+    <div id="control-tooltip" style="display:none; position:fixed; background:#111827; color:#fff;
+      padding:8px 10px; border-radius:8px; font-size:12px; pointer-events:none; z-index:120;
+      max-width:280px; box-shadow:0 6px 18px rgba(0,0,0,0.24); line-height:1.45;"></div>
 
-    <div id="insights-wrapper" style="display:none; margin-top:24px;"></div>
-
-    <div id="corr-wrapper" style="display:none; margin-top:28px;">
+    <div id="corr-wrapper" style="display:none; margin-top:32px;">
       <details>
         <summary style="cursor:pointer; padding:10px 14px; background:#f9fafb; border:1px solid #e5e7eb;
           border-radius:8px; font-size:16px; font-weight:700; color:#111; user-select:none;">
@@ -167,7 +175,7 @@ def symptoms_chart():
       </details>
     </div>
 
-    <div id="med-corr-wrapper" style="display:none; margin-top:28px;">
+    <div id="med-corr-wrapper" style="display:none; margin-top:32px;">
       <details>
         <summary style="cursor:pointer; padding:10px 14px; background:#f9fafb; border:1px solid #e5e7eb;
           border-radius:8px; font-size:16px; font-weight:700; color:#111; user-select:none;">
@@ -208,6 +216,39 @@ def symptoms_chart():
       document.getElementById("med-tooltip").style.display = "none";
     }}
 
+    function showControlTip(target) {{
+      const tip = document.getElementById("control-tooltip");
+      const msg = target.getAttribute("data-help") || "";
+      if (!msg) return;
+      tip.textContent = msg;
+      tip.style.display = "block";
+      const rect = target.getBoundingClientRect();
+      const w = tip.offsetWidth || 260;
+      const h = tip.offsetHeight || 44;
+      let left = rect.left + (rect.width - w) / 2;
+      let top = rect.top - h - 10;
+      if (left < 8) left = 8;
+      if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+      if (top < 8) top = rect.bottom + 10;
+      tip.style.left = left + "px";
+      tip.style.top = top + "px";
+    }}
+
+    function hideControlTip() {{
+      document.getElementById("control-tooltip").style.display = "none";
+    }}
+
+    function bindControlTips() {{
+      ["smooth-btn", "bucket-btn"].forEach((id) => {{
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener("mouseenter", () => showControlTip(el));
+        el.addEventListener("focus", () => showControlTip(el));
+        el.addEventListener("mouseleave", hideControlTip);
+        el.addEventListener("blur", hideControlTip);
+      }});
+    }}
+
     function escHtml(v) {{
       return String(v)
         .replace(/&/g, "&amp;")
@@ -220,6 +261,26 @@ def symptoms_chart():
     function fmtDate(dateStr) {{
       const d = new Date(dateStr + "T00:00:00Z");
       return d.toLocaleDateString("en-US", {{ month: "short", day: "numeric", timeZone: "UTC" }});
+    }}
+
+    function addDays(dateStr, days) {{
+      const d = new Date(dateStr + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + days);
+      return d.toISOString().slice(0, 10);
+    }}
+
+    function bucketKey(dateStr) {{
+      if (_timeBucket !== "weekly") return dateStr;
+      const d = new Date(dateStr + "T00:00:00Z");
+      const day = (d.getUTCDay() + 6) % 7; // Monday=0
+      d.setUTCDate(d.getUTCDate() - day);
+      return d.toISOString().slice(0, 10);
+    }}
+
+    function bucketLabel(key) {{
+      if (_timeBucket !== "weekly") return fmtDate(key);
+      const end = addDays(key, 6);
+      return `${{fmtDate(key)}} - ${{fmtDate(end)}}`;
     }}
 
     function expandSymptomDates(s) {{
@@ -255,9 +316,10 @@ def symptoms_chart():
       return {{ bg, text: t > 0.55 ? "#fff" : "#333" }};
     }}
 
-    let _allSymp = [], _allMeds = [], _adherenceData = {{}}, _chart = null, _smoothed = true;
+    let _allSymp = [], _allMeds = [], _adherenceData = {{}}, _chart = null, _smoothed = true, _timeBucket = "daily";
 
     async function init() {{
+      bindControlTips();
       const [sr, mr, ar] = await Promise.all([
         fetch("/api/symptoms"), fetch("/api/medications"), fetch("/api/medications/adherence")
       ]);
@@ -317,6 +379,15 @@ def symptoms_chart():
       render();
     }}
 
+    function toggleBucket() {{
+      _timeBucket = _timeBucket === "daily" ? "weekly" : "daily";
+      const btn = document.getElementById("bucket-btn");
+      btn.textContent = _timeBucket === "daily" ? "Daily" : "Weekly";
+      btn.style.background = _timeBucket === "daily" ? "#0f766e" : "#fff";
+      btn.style.color = _timeBucket === "daily" ? "#fff" : "#0f766e";
+      render();
+    }}
+
     function applySmoothing(pts) {{
       return pts.map((pt, i) => {{
         const start = Math.max(0, i - 6);
@@ -372,6 +443,26 @@ def symptoms_chart():
       window.print();
     }}
 
+    function buildSampleInfo(symptoms) {{
+      const datesBySymptom = new Map();
+      symptoms.forEach(s => {{
+        if (!datesBySymptom.has(s.name)) datesBySymptom.set(s.name, new Set());
+        const set = datesBySymptom.get(s.name);
+        expandSymptomDates(s).forEach(d => set.add(d));
+      }});
+      return {{ datesBySymptom }};
+    }}
+
+    function pairSampleSize(sampleInfo, nameA, nameB) {{
+      const a = sampleInfo.datesBySymptom.get(nameA) || new Set();
+      const b = sampleInfo.datesBySymptom.get(nameB) || new Set();
+      let n = 0;
+      const small = a.size <= b.size ? a : b;
+      const large = a.size <= b.size ? b : a;
+      small.forEach(d => {{ if (large.has(d)) n += 1; }});
+      return n;
+    }}
+
     function render() {{
       const from = document.getElementById("range-from").value;
       const to   = document.getElementById("range-to").value;
@@ -384,9 +475,10 @@ def symptoms_chart():
         const d = m.timestamp.slice(0, 10);
         return (!from || d >= from) && (!to || d <= to);
       }});
+      const sampleInfo = buildSampleInfo(syms);
       renderChart(syms, meds);
-      renderCorrelations(from, to);
-      renderMedCorrelations(from, to);
+      renderCorrelations(from, to, sampleInfo);
+      renderMedCorrelations(from, to, sampleInfo);
       renderInsights(from, to);
     }}
 
@@ -399,18 +491,21 @@ def symptoms_chart():
       document.getElementById("no-data").style.display = hasData ? "none" : "block";
       if (!hasData) return;
 
-      const allDates = new Set();
-      symptoms.forEach(s => expandSymptomDates(s).forEach(date => allDates.add(date)));
-      medications.forEach(m => allDates.add(m.timestamp.slice(0, 10)));
-      const labels = [...allDates].sort().map(d => fmtDate(d));
+      const allBuckets = new Set();
+      symptoms.forEach(s => expandSymptomDates(s).forEach(date => allBuckets.add(bucketKey(date))));
+      medications.forEach(m => allBuckets.add(bucketKey(m.timestamp.slice(0, 10))));
+      const bucketKeys = [...allBuckets].sort();
+      const labels = bucketKeys.map(bucketLabel);
+      const labelByKey = new Map(bucketKeys.map(k => [k, bucketLabel(k)]));
 
       const groups = new Map();
       symptoms.forEach(s => {{
         expandSymptomDates(s).forEach(date => {{
+          const b = bucketKey(date);
           if (!groups.has(s.name)) groups.set(s.name, new Map());
           const byDate = groups.get(s.name);
-          if (!byDate.has(date)) byDate.set(date, []);
-          byDate.get(date).push(s.severity);
+          if (!byDate.has(b)) byDate.set(b, []);
+          byDate.get(b).push(s.severity);
         }});
       }});
 
@@ -422,19 +517,23 @@ def symptoms_chart():
 
       let i = 0;
       const datasets = [];
+      const symptomMeta = [];
       for (const [name, byDate] of groups) {{
         const color = PALETTE[i % PALETTE.length]; i++;
-        let pts = [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, sevs]) => ({{
-          x: fmtDate(date),
+        let pts = [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, sevs]) => ({{
+          x: labelByKey.get(key),
           y: Math.round(sevs.reduce((a, b) => a + b, 0) / sevs.length * 10) / 10,
         }}));
         if (_smoothed) pts = applySmoothing(pts);
+        const datasetIndex = datasets.length;
         datasets.push({{
           label: name,
           data: pts,
+          yAxisID: "y",
           borderColor: color, backgroundColor: color + "33",
           tension: 0.4, pointRadius: 4, pointHoverRadius: 7,
         }});
+        symptomMeta.push({{ label: name, color, datasetIndex }});
       }}
 
       const medGroups = new Map();
@@ -443,7 +542,7 @@ def symptoms_chart():
         medGroups.get(m.name).push(m);
       }});
 
-      // Build vertical line annotations for each medication event
+      // Medication annotations (replaces scatter lane)
       const medAnnotations = {{}};
       const medMeta = []; // {{ name, color, annotationIds }}
       for (const [name, meds] of [...medGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {{
@@ -452,10 +551,11 @@ def symptoms_chart():
         meds.forEach((m, j) => {{
           const id = `med_${{j}}_${{name}}`;
           ids.push(id);
+          const bKey = bucketKey(m.timestamp.slice(0, 10));
           medAnnotations[id] = {{
             type: "line",
             scaleID: "x",
-            value: fmtDate(m.timestamp.slice(0, 10)),
+            value: labelByKey.get(bKey),
             borderColor: color,
             borderWidth: 1.5,
             borderDash: [5, 4],
@@ -484,8 +584,8 @@ def symptoms_chart():
             annotation: {{ annotations: medAnnotations }},
             tooltip: {{
               callbacks: {{
-                title: (items) => items[0].dataset.label,
-                label: (item) => `Avg severity: ${{item.parsed.y}} on ${{item.label}}`,
+                title: (items) => items[0].label,
+                label: (item) => `${{item.dataset.label}}: avg severity ${{item.parsed.y}}`,
               }},
             }},
             legend: {{ display: false }},
@@ -493,23 +593,23 @@ def symptoms_chart():
         }},
       }});
 
-      buildToggles(_chart, datasets, medMeta, topSymptoms);
+      buildToggles(_chart, symptomMeta, medMeta, topSymptoms);
     }}
 
-    function buildToggles(chart, datasets, medMeta, topSymptoms) {{
+    function buildToggles(chart, symptomMeta, medMeta, topSymptoms) {{
       const bar = document.getElementById("toggle-bar");
-      datasets.forEach((ds, i) => {{
-        const color = ds.borderColor;
+      symptomMeta.forEach((info) => {{
+        const color = info.color;
         const btn = document.createElement("button");
         const dot = document.createElement("span");
         dot.style.cssText = `width:10px;height:10px;border-radius:50%;background:${{color}};flex-shrink:0;display:inline-block;`;
         btn.appendChild(dot);
-        btn.appendChild(document.createTextNode(` ${{ds.label}}`));
+        btn.appendChild(document.createTextNode(` ${{info.label}}`));
         btn.style.cssText = `display:inline-flex;align-items:center;gap:5px;padding:4px 12px;`
           + `border-radius:20px;border:1.5px solid ${{color}};background:${{color}}22;`
           + `font-size:13px;cursor:pointer;font-family:inherit;color:#111;transition:opacity .15s;`;
         btn.onclick = () => {{
-          const meta = chart.getDatasetMeta(i);
+          const meta = chart.getDatasetMeta(info.datasetIndex);
           meta.hidden = !meta.hidden;
           chart.update();
           const hidden = meta.hidden;
@@ -518,8 +618,8 @@ def symptoms_chart():
           btn.style.borderColor = hidden ? "#d1d5db" : color;
           btn.style.color = hidden ? "#9ca3af" : "#111";
         }};
-        if (!topSymptoms.has(ds.label)) {{
-          chart.getDatasetMeta(i).hidden = true;
+        if (!topSymptoms.has(info.label)) {{
+          chart.getDatasetMeta(info.datasetIndex).hidden = true;
           btn.style.opacity = "0.35";
           btn.style.background = "transparent";
           btn.style.borderColor = "#d1d5db";
@@ -652,8 +752,8 @@ def symptoms_chart():
       const wrapper = document.getElementById("insights-wrapper");
       if (!insights.length) {{ wrapper.style.display = "none"; return; }}
       wrapper.style.display = "block";
-      let html = `<h2 style="font-size:15px;font-weight:700;color:#374151;margin:0 0 10px;">Key Patterns</h2>`;
-      html += `<div style="display:flex;flex-direction:column;gap:8px;">`;
+      let html = `<h2 style="margin:0 0 12px; font-size:18px; font-weight:700; color:#111827;">Key Patterns</h2>`;
+      html += `<div style="display:flex;flex-direction:column;gap:10px;">`;
       for (const ins of insights) {{
         html += `<div style="padding:10px 14px;background:${{ins.bg}};border:1px solid ${{ins.border}};`
               + `border-left:4px solid ${{ins.color}};border-radius:8px;">`
@@ -665,7 +765,7 @@ def symptoms_chart():
       wrapper.innerHTML = html;
     }}
 
-    async function renderCorrelations(from, to) {{
+    async function renderCorrelations(from, to, sampleInfo) {{
       const params = new URLSearchParams();
       if (from) params.set("from_date", from);
       if (to)   params.set("to_date", to);
@@ -693,12 +793,14 @@ def symptoms_chart():
           const {{ bg, text }} = corrColor(val);
           const isDiag = r === c;
           const label = isDiag ? "&mdash;" : describeR(val, false);
+          const nDays = isDiag ? 0 : pairSampleSize(sampleInfo, names[r], names[c]);
           const cellBg = isDiag ? "#f3f4f6" : bg;
           const cellText = isDiag ? "#9ca3af" : text;
           const rStr = (!isDiag && val !== null) ? `<div style="font-size:10px;opacity:0.75;margin-top:2px;">${{val >= 0 ? "+" : ""}}${{val.toFixed(2)}}</div>` : "";
+          const nStr = !isDiag ? `<div style="font-size:10px;opacity:0.65;margin-top:1px;">n=${{nDays}}d</div>` : "";
           const isStrong = !isDiag && val !== null && Math.abs(val) >= 0.5;
           html += `<td style="min-width:80px; padding:6px 6px; text-align:center;
-            font-size:12px; font-weight:600; white-space:nowrap; background:${{cellBg}}; color:${{cellText}};${{isStrong ? "outline:2px solid rgba(0,0,0,0.22);outline-offset:-2px;" : ""}}">${{label}}${{rStr}}</td>`;
+            font-size:12px; font-weight:600; white-space:nowrap; background:${{cellBg}}; color:${{cellText}};${{isStrong ? "outline:2px solid rgba(0,0,0,0.22);outline-offset:-2px;" : ""}}">${{label}}${{rStr}}${{nStr}}</td>`;
         }}
         html += `</tr>`;
       }}
@@ -706,7 +808,7 @@ def symptoms_chart():
       document.getElementById("corr-table").innerHTML = html;
     }}
 
-    async function renderMedCorrelations(from, to) {{
+    async function renderMedCorrelations(from, to, sampleInfo) {{
       const params = new URLSearchParams();
       if (from) params.set("from_date", from);
       if (to)   params.set("to_date", to);
@@ -734,9 +836,11 @@ def symptoms_chart():
           const {{ bg, text }} = corrColor(val);
           const label = describeR(val, true);
           const rStr = val !== null ? `<div style="font-size:10px;opacity:0.75;margin-top:2px;">${{val >= 0 ? "+" : ""}}${{val.toFixed(2)}}</div>` : "";
+          const nDays = (sampleInfo.datesBySymptom.get(symp_names[c]) || new Set()).size;
+          const nStr = `<div style="font-size:10px;opacity:0.65;margin-top:1px;">n=${{nDays}}d</div>`;
           const isStrong = val !== null && Math.abs(val) >= 0.5;
           html += `<td style="min-width:80px; padding:6px 6px; text-align:center;
-            font-size:12px; font-weight:600; white-space:nowrap; background:${{bg}}; color:${{text}};${{isStrong ? "outline:2px solid rgba(0,0,0,0.22);outline-offset:-2px;" : ""}}">${{label}}${{rStr}}</td>`;
+            font-size:12px; font-weight:600; white-space:nowrap; background:${{bg}}; color:${{text}};${{isStrong ? "outline:2px solid rgba(0,0,0,0.22);outline-offset:-2px;" : ""}}">${{label}}${{rStr}}${{nStr}}</td>`;
         }}
         html += `</tr>`;
       }}

@@ -165,6 +165,9 @@ def physician_login_get(request: Request, error: str = ""):
     <p style="margin-top:16px; font-size:13px; color:#6b7280;">
       No account? <a href="/physician/signup" style="color:#1e3a8a;">Sign up</a>
     </p>
+    <p style="margin-top:8px; font-size:13px; color:#6b7280;">
+      Not a physician? <a href="/login" style="color:#1e3a8a;">Patient login</a>
+    </p>
   </div>
 </body>
 </html>

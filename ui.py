@@ -210,6 +210,7 @@ async function sbSave(e){{
 def _nav_bar(active: str = "") -> str:
     physician_banner = ""
     patient_name = _physician_ctx.get()
+    logout_action = "/physician/logout" if patient_name is not None else "/logout"
     if patient_name is not None:
         physician_banner = (
             '<div style="background:#fef9c3; border-bottom:1px solid #fde047; padding:6px 24px;'
@@ -257,7 +258,7 @@ def _nav_bar(active: str = "") -> str:
         ' font-size:13px; font-weight:700; padding:6px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Medication</a>'
         + dlnk("/profile", "Profile", "profile")
-        + '<form method="post" action="/logout" style="margin:0;">'
+        + f'<form method="post" action="{logout_action}" style="margin:0;">'
         '<button type="submit" style="background:transparent; border:1px solid rgba(255,255,255,0.4);'
         ' color:rgba(255,255,255,0.7); border-radius:6px; padding:4px 12px;'
         ' font-size:13px; cursor:pointer; font-family:inherit;">Log Out</button>'
@@ -281,7 +282,7 @@ def _nav_bar(active: str = "") -> str:
         '<a href="/medications" style="background:#a855f7; color:#fff; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:7px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Medication</a>'
-        '<form method="post" action="/logout" style="margin:0;">'
+        f'<form method="post" action="{logout_action}" style="margin:0;">'
         '<button type="submit" style="background:transparent; border:1px solid rgba(255,255,255,0.4);'
         ' color:rgba(255,255,255,0.7); border-radius:6px; padding:6px 12px;'
         ' font-size:13px; cursor:pointer; font-family:inherit;">Log Out</button>'
