@@ -165,7 +165,38 @@ def symptoms_chart():
     cursor: pointer;
     font-family: inherit;
   }}
+  .btn-expand {{
+    border: 1px solid #d1d5db;
+    background: #fff;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+    color: #374151;
+  }}
+  .btn-expand:hover {{ background: #f9fafb; }}
   .report-empty {{ margin-top: 28px; }}
+  #chart-modal-backdrop {{
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 24, 39, 0.66);
+    z-index: 125;
+  }}
+  body.chart-modal-open #chart-modal-backdrop {{ display: block; }}
+  body.chart-modal-open #chart-wrapper {{
+    display: block !important;
+    position: fixed;
+    inset: 18px;
+    margin: 0 !important;
+    z-index: 130;
+    max-width: none;
+    overflow: auto;
+  }}
+  #chart-close-btn {{ display: none; }}
+  body.chart-modal-open #chart-close-btn {{ display: inline-block; }}
+  body.chart-modal-open #chart-expand-btn {{ display: none; }}
 @media print {{
   nav, .screen-only {{ display: none !important; }}
   .print-only        {{ display: block !important; }}
@@ -203,7 +234,13 @@ def symptoms_chart():
     <div id="insights-wrapper" class="card section-card" style="display:none; padding:20px;"></div>
 
     <div id="chart-wrapper" class="card section-card" style="display:none; padding:24px;">
-      <h2 class="screen-only section-title" style="margin-top:0;">Symptom Trend Graph</h2>
+      <div class="screen-only" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+        <h2 class="section-title" style="margin-top:0;">Symptom Trend Graph</h2>
+        <div style="display:flex; gap:8px;">
+          <button id="chart-expand-btn" class="btn-expand" onclick="openChartModal()">Expand</button>
+          <button id="chart-close-btn" class="btn-expand" onclick="closeChartModal()">Close</button>
+        </div>
+      </div>
       <div class="screen-only controls-row" style="margin-bottom:14px;">
         <div class="control-group">
           <label for="range-from" class="control-label">From</label>
@@ -231,6 +268,7 @@ def symptoms_chart():
     <div id="control-tooltip" style="display:none; position:fixed; background:#111827; color:#fff;
       padding:8px 10px; border-radius:8px; font-size:12px; pointer-events:none; z-index:120;
       max-width:280px; box-shadow:0 6px 18px rgba(0,0,0,0.24); line-height:1.45;"></div>
+    <div id="chart-modal-backdrop" onclick="closeChartModal()"></div>
 
     <div id="corr-wrapper" style="display:none; margin-top:32px;">
       <details>
@@ -312,6 +350,17 @@ def symptoms_chart():
       document.getElementById("control-tooltip").style.display = "none";
     }}
 
+    function openChartModal() {{
+      if (!document.getElementById("chart-wrapper")) return;
+      document.body.classList.add("chart-modal-open");
+      setTimeout(() => {{ if (_chart) _chart.resize(); }}, 0);
+    }}
+
+    function closeChartModal() {{
+      document.body.classList.remove("chart-modal-open");
+      setTimeout(() => {{ if (_chart) _chart.resize(); }}, 0);
+    }}
+
     function bindControlTips() {{
       ["smooth-btn", "bucket-btn"].forEach((id) => {{
         const el = document.getElementById(id);
@@ -320,6 +369,11 @@ def symptoms_chart():
         el.addEventListener("focus", () => showControlTip(el));
         el.addEventListener("mouseleave", hideControlTip);
         el.addEventListener("blur", hideControlTip);
+      }});
+      document.addEventListener("keydown", (ev) => {{
+        if (ev.key === "Escape" && document.body.classList.contains("chart-modal-open")) {{
+          closeChartModal();
+        }}
       }});
     }}
 
@@ -393,6 +447,8 @@ def symptoms_chart():
     let _allSymp = [], _allMeds = [], _adherenceData = {{}}, _chart = null, _smoothed = true, _timeBucket = "daily";
     let _chartPreset = "", _patternsPreset = "";
     let _patternsFrom = "", _patternsTo = "", _patternsInitialized = false;
+    let _corrFrom = "", _corrTo = "", _corrPreset = "", _corrInitialized = false;
+    let _medCorrFrom = "", _medCorrTo = "", _medCorrPreset = "", _medCorrInitialized = false;
 
     async function init() {{
       bindControlTips();
@@ -483,6 +539,78 @@ def symptoms_chart():
       ].sort();
       if (!dates.length) return {{ min: "", max: "" }};
       return {{ min: dates[0], max: dates[dates.length - 1] }};
+    }}
+
+    function _filteredSymptomsInRange(from, to) {{
+      return _allSymp.filter(s => {{
+        const start = s.timestamp.slice(0, 10);
+        const end = s.end_time ? s.end_time.slice(0, 10) : start;
+        return (!from || end >= from) && (!to || start <= to);
+      }});
+    }}
+
+    function setCorrPreset(days) {{
+      const bounds = _dataDateBounds();
+      if (!bounds.max) return;
+      const to = new Date(bounds.max + "T00:00:00");
+      const from = new Date(+to - (days - 1) * 86400000);
+      _corrFrom = from.toISOString().slice(0, 10);
+      _corrTo = bounds.max;
+      _corrPreset = `${{days}}d`;
+      renderCorrelations();
+    }}
+
+    function setCorrAll() {{
+      const bounds = _dataDateBounds();
+      _corrFrom = bounds.min;
+      _corrTo = bounds.max;
+      _corrPreset = "all";
+      renderCorrelations();
+    }}
+
+    function updateCorrRange() {{
+      const fromEl = document.getElementById("corr-from");
+      const toEl = document.getElementById("corr-to");
+      if (!fromEl || !toEl) return;
+      let from = fromEl.value || "";
+      let to = toEl.value || "";
+      if (from && to && from > to) [from, to] = [to, from];
+      _corrFrom = from;
+      _corrTo = to;
+      _corrPreset = "";
+      renderCorrelations();
+    }}
+
+    function setMedCorrPreset(days) {{
+      const bounds = _dataDateBounds();
+      if (!bounds.max) return;
+      const to = new Date(bounds.max + "T00:00:00");
+      const from = new Date(+to - (days - 1) * 86400000);
+      _medCorrFrom = from.toISOString().slice(0, 10);
+      _medCorrTo = bounds.max;
+      _medCorrPreset = `${{days}}d`;
+      renderMedCorrelations();
+    }}
+
+    function setMedCorrAll() {{
+      const bounds = _dataDateBounds();
+      _medCorrFrom = bounds.min;
+      _medCorrTo = bounds.max;
+      _medCorrPreset = "all";
+      renderMedCorrelations();
+    }}
+
+    function updateMedCorrRange() {{
+      const fromEl = document.getElementById("med-corr-from");
+      const toEl = document.getElementById("med-corr-to");
+      if (!fromEl || !toEl) return;
+      let from = fromEl.value || "";
+      let to = toEl.value || "";
+      if (from && to && from > to) [from, to] = [to, from];
+      _medCorrFrom = from;
+      _medCorrTo = to;
+      _medCorrPreset = "";
+      renderMedCorrelations();
     }}
 
     function setPatternsPreset(days) {{
@@ -626,10 +754,22 @@ def symptoms_chart():
         _patternsTo = to;
         _patternsInitialized = true;
       }}
+      if (!_corrInitialized) {{
+        _corrFrom = from;
+        _corrTo = to;
+        _corrPreset = "30d";
+        _corrInitialized = true;
+      }}
+      if (!_medCorrInitialized) {{
+        _medCorrFrom = from;
+        _medCorrTo = to;
+        _medCorrPreset = "30d";
+        _medCorrInitialized = true;
+      }}
       const sampleInfo = buildSampleInfo(syms);
       renderChart(syms, meds);
-      renderCorrelations(from, to, sampleInfo);
-      renderMedCorrelations(from, to, sampleInfo);
+      renderCorrelations();
+      renderMedCorrelations();
       renderInsights();
     }}
 
@@ -640,7 +780,10 @@ def symptoms_chart():
       const hasData = symptoms.length > 0 || medications.length > 0;
       document.getElementById("chart-wrapper").style.display = hasData ? "block" : "none";
       document.getElementById("no-data").style.display = hasData ? "none" : "block";
-      if (!hasData) return;
+      if (!hasData) {{
+        closeChartModal();
+        return;
+      }}
 
       const allBuckets = new Set();
       symptoms.forEach(s => expandSymptomDates(s).forEach(date => allBuckets.add(bucketKey(date))));
@@ -941,12 +1084,13 @@ def symptoms_chart():
       wrapper.innerHTML = html;
     }}
 
-    async function renderCorrelations(from, to, sampleInfo) {{
+    async function renderCorrelations() {{
       const params = new URLSearchParams();
-      if (from) params.set("from_date", from);
-      if (to)   params.set("to_date", to);
+      if (_corrFrom) params.set("from_date", _corrFrom);
+      if (_corrTo)   params.set("to_date", _corrTo);
       const resp = await fetch(`/api/symptoms/correlations?${{params}}`);
       const data = await resp.json();
+      const sampleInfo = buildSampleInfo(_filteredSymptomsInRange(_corrFrom, _corrTo));
 
       const corrWrapper = document.getElementById("corr-wrapper");
       if (data.names.length < 2) {{ corrWrapper.style.display = "none"; return; }}
@@ -957,8 +1101,24 @@ def symptoms_chart():
         text-align:center; white-space:nowrap; background:#f5f5f5;"`;
       const rowHeadStyle = `style="padding:6px 10px; font-size:12px; font-weight:600;
         text-align:right; white-space:nowrap; background:#f5f5f5;"`;
+      const p7Class = _corrPreset === "7d" ? "btn-control btn-control-active" : "btn-control";
+      const p30Class = _corrPreset === "30d" ? "btn-control btn-control-active" : "btn-control";
+      const p90Class = _corrPreset === "90d" ? "btn-control btn-control-active" : "btn-control";
+      const pallClass = _corrPreset === "all" ? "btn-control btn-control-active" : "btn-control";
 
       let html = `<table style="border-collapse:collapse; width:100%;">`;
+      html = `<div class="screen-only controls-row" style="margin-bottom:10px;">`
+        + `<div class="control-group"><label for="corr-from" class="control-label">From</label>`
+        + `<input type="date" id="corr-from" class="control-input" value="${{_corrFrom}}" onchange="updateCorrRange()"></div>`
+        + `<div class="control-group"><label for="corr-to" class="control-label">To</label>`
+        + `<input type="date" id="corr-to" class="control-input" value="${{_corrTo}}" onchange="updateCorrRange()"></div>`
+        + `<div class="preset-row">`
+        + `<button class="${{p7Class}}" onclick="setCorrPreset(7)">7d</button>`
+        + `<button class="${{p30Class}}" onclick="setCorrPreset(30)">30d</button>`
+        + `<button class="${{p90Class}}" onclick="setCorrPreset(90)">90d</button>`
+        + `<button class="${{pallClass}}" onclick="setCorrAll()">All</button>`
+        + `</div></div>`
+        + `<table style="border-collapse:collapse; width:100%;">`;
       html += `<thead><tr><th ${{thStyle}}></th>`;
       for (const name of names) html += `<th ${{thStyle}}>${{escHtml(name)}}</th>`;
       html += `</tr></thead><tbody>`;
@@ -984,12 +1144,13 @@ def symptoms_chart():
       document.getElementById("corr-table").innerHTML = html;
     }}
 
-    async function renderMedCorrelations(from, to, sampleInfo) {{
+    async function renderMedCorrelations() {{
       const params = new URLSearchParams();
-      if (from) params.set("from_date", from);
-      if (to)   params.set("to_date", to);
+      if (_medCorrFrom) params.set("from_date", _medCorrFrom);
+      if (_medCorrTo)   params.set("to_date", _medCorrTo);
       const resp = await fetch(`/api/correlations/med-symptom?${{params}}`);
       const data = await resp.json();
+      const sampleInfo = buildSampleInfo(_filteredSymptomsInRange(_medCorrFrom, _medCorrTo));
 
       const wrapper = document.getElementById("med-corr-wrapper");
       if (!data.med_names.length || !data.symp_names.length) {{ wrapper.style.display = "none"; return; }}
@@ -1000,8 +1161,23 @@ def symptoms_chart():
         text-align:center; white-space:nowrap; background:#f5f5f5;"`;
       const rowHeadStyle = `style="padding:6px 10px; font-size:12px; font-weight:600;
         text-align:right; white-space:nowrap; background:#f5f5f5;"`;
+      const p7Class = _medCorrPreset === "7d" ? "btn-control btn-control-active" : "btn-control";
+      const p30Class = _medCorrPreset === "30d" ? "btn-control btn-control-active" : "btn-control";
+      const p90Class = _medCorrPreset === "90d" ? "btn-control btn-control-active" : "btn-control";
+      const pallClass = _medCorrPreset === "all" ? "btn-control btn-control-active" : "btn-control";
 
-      let html = `<table style="border-collapse:collapse; width:100%;">`;
+      let html = `<div class="screen-only controls-row" style="margin-bottom:10px;">`
+        + `<div class="control-group"><label for="med-corr-from" class="control-label">From</label>`
+        + `<input type="date" id="med-corr-from" class="control-input" value="${{_medCorrFrom}}" onchange="updateMedCorrRange()"></div>`
+        + `<div class="control-group"><label for="med-corr-to" class="control-label">To</label>`
+        + `<input type="date" id="med-corr-to" class="control-input" value="${{_medCorrTo}}" onchange="updateMedCorrRange()"></div>`
+        + `<div class="preset-row">`
+        + `<button class="${{p7Class}}" onclick="setMedCorrPreset(7)">7d</button>`
+        + `<button class="${{p30Class}}" onclick="setMedCorrPreset(30)">30d</button>`
+        + `<button class="${{p90Class}}" onclick="setMedCorrPreset(90)">90d</button>`
+        + `<button class="${{pallClass}}" onclick="setMedCorrAll()">All</button>`
+        + `</div></div>`
+        + `<table style="border-collapse:collapse; width:100%;">`;
       html += `<thead><tr><th ${{thStyle}}></th>`;
       for (const s of symp_names) html += `<th ${{thStyle}}>${{escHtml(s)}}</th>`;
       html += `</tr></thead><tbody>`;
