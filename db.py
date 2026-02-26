@@ -92,10 +92,19 @@ def init_db():
                 notes      TEXT    NOT NULL DEFAULT '',
                 frequency  TEXT    NOT NULL,
                 start_date TEXT    NOT NULL,
+                created_at TEXT    NOT NULL DEFAULT '',
                 end_date   TEXT    NOT NULL DEFAULT '',
                 active     INTEGER NOT NULL DEFAULT 1
             )
         """)
+        sched_cols = [row[1] for row in conn.execute("PRAGMA table_info(medication_schedules)")]
+        if "created_at" not in sched_cols:
+            conn.execute("ALTER TABLE medication_schedules ADD COLUMN created_at TEXT NOT NULL DEFAULT ''")
+        # Backfill historical rows with a best-effort value when created_at is missing.
+        conn.execute(
+            "UPDATE medication_schedules SET created_at = start_date || ' 00:00:00'"
+            " WHERE created_at = ''"
+        )
         conn.execute("""
             CREATE TABLE IF NOT EXISTS medication_doses (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,

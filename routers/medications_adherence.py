@@ -40,6 +40,13 @@ def _parse_valid_scheduled_date(scheduled_date: str):
     return d
 
 
+def _parse_created_at(created_at: str):
+    try:
+        return datetime.strptime((created_at or "").strip(), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
 def _dose_label(dose_num: int, total: int) -> str:
     if total == 1:
         return "Daily dose"
@@ -120,7 +127,7 @@ def medications_today(d: str = "", w_end: str = ""):
     uid = _current_user_id.get()
     with get_db() as conn:
         schedules = conn.execute(
-            "SELECT id, name, dose, frequency FROM medication_schedules"
+            "SELECT id, name, dose, frequency, created_at FROM medication_schedules"
             " WHERE user_id=? AND active=1 ORDER BY name",
             (uid,),
         ).fetchall()
@@ -179,6 +186,7 @@ def medications_today(d: str = "", w_end: str = ""):
         )
     prev_week_end = (window_start - timedelta(days=1)).isoformat()
     prev_week_href = f"/medications/today?d={prev_week_end}&w_end={prev_week_end}"
+    today_href = f"/medications/today?d={today.isoformat()}&w_end={today.isoformat()}"
     next_week_html = ""
     if window_end < today:
         next_window_end = min(today, window_end + timedelta(days=7))
@@ -201,6 +209,9 @@ def medications_today(d: str = "", w_end: str = ""):
         freq = sched["frequency"]
         dpd = _doses_per_day(freq)
         dose_str = f'<span class="med-dose">{sdose}</span>' if sched["dose"] else ""
+        created_at = _parse_created_at(sched["created_at"]) if "created_at" in sched.keys() else None
+        if created_at and selected_day < created_at.date():
+            continue
 
         if dpd == 0:
             prn_taken = [r for r in dose_rows if r["schedule_id"] == sid and r["status"] == "taken"]
@@ -358,8 +369,10 @@ def medications_today(d: str = "", w_end: str = ""):
 <head>{PAGE_STYLE}<title>Today's Doses</title>
   <style>
     .today-shell {{ width:min(1320px, calc(100vw - 380px)); }}
-    .today-header {{ display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:14px; }}
+    .today-header {{ display:flex; align-items:flex-end; justify-content:flex-start; gap:10px; flex-wrap:wrap; margin-bottom:14px; }}
     .today-label {{ margin:0; font-size:14px; color:#6b7280; font-weight:600; }}
+    .today-jump-link {{ text-decoration:none; color:#6d28d9; font-size:12px; font-weight:700; white-space:nowrap; }}
+    .today-jump-link:hover {{ text-decoration:underline; color:#5b21b6; }}
     .day-tabs-row {{ display:flex; align-items:center; gap:10px; margin-bottom:16px; }}
     .week-nav-btn {{ text-decoration:none; border:1px solid #d1d5db; color:#374151; background:#fff; border-radius:10px; padding:8px 10px; font-size:12px; font-weight:700; white-space:nowrap; }}
     .week-nav-btn:hover {{ background:#f9fafb; }}
@@ -428,6 +441,7 @@ def medications_today(d: str = "", w_end: str = ""):
     <div class="today-shell">
       <div class="today-header">
         <p class="today-label">{selected_day.strftime("%A, %B %-d, %Y")}</p>
+        <a class="today-jump-link" href="{today_href}">Today</a>
       </div>
       <div class="day-tabs-row">
         <a class="week-nav-btn" href="{prev_week_href}">&larr; Previous week</a>
@@ -465,7 +479,7 @@ def medications_today(d: str = "", w_end: str = ""):
         const today = `${{yyyy}}-${{mo}}-${{dd}}`;
         root.querySelectorAll("input.dose-time[data-date]").forEach((el) => {{
           const d = el.getAttribute("data-date") || "";
-          if (!el.value) el.value = d === today ? nowTime : "08:00";
+          if (!el.value) el.value = nowTime;
           if (d === today) el.max = nowTime;
         }});
       }}
@@ -506,9 +520,13 @@ def medications_today(d: str = "", w_end: str = ""):
         const submitBtn = form.querySelector('button[type="submit"]');
         if (submitBtn) submitBtn.disabled = true;
         try {{
+          const now = new Date();
+          const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+          const fd = new FormData(form);
+          fd.set("client_now", local.toISOString().slice(0, 16));
           const res = await fetch(form.action, {{
             method: "POST",
-            body: new FormData(form),
+            body: fd,
             headers: {{ "X-Requested-With": "fetch" }},
           }});
           if (!res.ok) throw new Error("action failed");
@@ -521,7 +539,7 @@ def medications_today(d: str = "", w_end: str = ""):
       }});
 
       document.addEventListener("click", async (e) => {{
-        const link = e.target.closest("a.day-tab, a.week-nav-btn");
+        const link = e.target.closest("a.day-tab, a.week-nav-btn, a.today-jump-link");
         if (!link) return;
         e.preventDefault();
         const href = link.getAttribute("href") || "";
@@ -553,56 +571,355 @@ def medications_today(d: str = "", w_end: str = ""):
 
 @router.get("/medications/schedules", response_class=HTMLResponse)
 def schedules_list():
-    uid = _current_user_id.get()
-    with get_db() as conn:
-        schedules = conn.execute(
-            "SELECT id, name, dose, frequency, start_date FROM medication_schedules"
-            " WHERE user_id=? AND active=1 ORDER BY name",
-            (uid,),
-        ).fetchall()
-        cards_html = ""
-        for s in schedules:
-            adh = _adherence_7d(conn, s["id"], uid, s["start_date"], s["frequency"])
-            badge = _adherence_badge(adh)
-            sname = html.escape(s["name"])
-            sdose = html.escape(s["dose"])
-            freq_label = FREQ_LABELS.get(s["frequency"], s["frequency"])
-            cards_html += f"""
-      <div class="card" style="margin-bottom:14px;">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px;">
-          <div>
-            <div style="font-size:17px;font-weight:700;color:#111;">{sname}</div>
-            {f'<div style="font-size:13px;color:#7c3aed;margin-top:2px;font-weight:600;">{sdose}</div>' if s["dose"] else ""}
-            <div style="font-size:13px;color:#6b7280;margin-top:2px;">{freq_label}</div>
-            <div style="margin-top:6px;">{badge}</div>
-          </div>
-          <div style="display:flex;gap:8px;flex-shrink:0;align-items:center;">
-            <a href="/medications/schedules/{s['id']}/edit" class="btn-edit">Edit</a>
-            <form method="post" action="/medications/schedules/{s['id']}/deactivate" style="margin:0;">
-              <button class="btn-delete" type="submit"
-                onclick="return confirm('Stop tracking this schedule?')">Deactivate</button>
-            </form>
-          </div>
-        </div>
-      </div>"""
-
-    empty = "<p class='empty'>No active schedules. Add one to start tracking adherence.</p>" if not schedules else ""
+    from routers.medications import _MED_DATALIST
+    today_str = date.today().isoformat()
+    freq_options = "".join(
+        f'<option value="{k}">{html.escape(v)}</option>' for k, v in FREQ_LABELS.items()
+    )
     return f"""<!DOCTYPE html>
 <html>
-<head>{PAGE_STYLE}<title>Medication Schedules</title></head>
+<head>{PAGE_STYLE}<title>Medication Schedules</title>
+  <style>
+    .sched-shell {{ width:min(1120px, calc(100vw - 380px)); }}
+    .sched-top {{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px; }}
+    .sched-inline-form {{ margin-bottom:16px; }}
+    .sched-inline-form .card {{ margin:0; }}
+    .sched-grid {{ display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:12px; }}
+    .sched-card {{ border:1px solid #e5e7eb; border-radius:12px; background:#fff; padding:14px; }}
+    .sched-name {{ font-size:16px; font-weight:700; color:#111827; }}
+    .sched-dose {{ font-size:12px; color:#7c3aed; margin-top:2px; font-weight:700; }}
+    .sched-meta {{ font-size:12px; color:#6b7280; margin-top:3px; }}
+    .sched-actions {{ display:flex; gap:8px; margin-top:10px; }}
+    .sched-empty {{ color:#6b7280; font-size:14px; padding:8px 2px; }}
+    .sched-error {{ color:#b91c1c; font-size:13px; margin-bottom:8px; }}
+    .sched-badge {{ font-size:12px; border-radius:999px; padding:3px 8px; font-weight:700; display:inline-block; margin-top:7px; }}
+    .sched-badge-good {{ background:#dcfce7; color:#15803d; }}
+    .sched-badge-mid {{ background:#fef9c3; color:#92400e; }}
+    .sched-badge-low {{ background:#fee2e2; color:#b91c1c; }}
+    .sched-badge-prn {{ background:#ede9fe; color:#7c3aed; }}
+    @media (max-width: 900px) {{
+      .sched-shell {{ width:100%; }}
+    }}
+  </style>
+</head>
 <body>
   {_nav_bar('meds')}
   <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
       <h1 style="margin:0;">Schedules</h1>
-      <a href="/medications/schedules/new" class="btn-primary" style="background:#7c3aed;font-size:14px;padding:7px 16px;">+ Add Schedule</a>
+      <button id="sched-add-btn" class="btn-primary" type="button" style="background:#7c3aed;font-size:14px;padding:7px 16px;">+ Add Schedule</button>
     </div>
     {_meds_subnav('schedules')}
-    {cards_html}
-    {empty}
+    <div class="sched-shell">
+      <section id="sched-inline-form" class="sched-inline-form" style="display:none;">
+        <div class="card">
+          <div id="sched-error" class="sched-error" style="display:none;"></div>
+          <form id="sched-form">
+            <input type="hidden" id="sched-id" value="">
+            <div class="form-group">
+              <label for="sched-name">Medication name <span style="color:#ef4444">*</span></label>
+              <input type="text" id="sched-name" name="name" required list="med-suggestions" autocomplete="off">
+              <datalist id="med-suggestions">{_MED_DATALIST}</datalist>
+            </div>
+            <div class="form-group">
+              <label for="sched-dose">Dose <span style="color:#aaa;font-weight:400">(optional)</span></label>
+              <input type="text" id="sched-dose" name="dose" placeholder="e.g. 500mg">
+            </div>
+            <div class="form-group">
+              <label for="sched-frequency">Frequency <span style="color:#ef4444">*</span></label>
+              <select id="sched-frequency" name="frequency"
+                style="width:auto;border:1px solid #d1d5db;border-radius:6px;padding:8px 10px;font-size:15px;font-family:inherit;">
+                {freq_options}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="sched-start-date">Start date <span style="color:#ef4444">*</span></label>
+              <input type="date" id="sched-start-date" name="start_date" value="{today_str}" max="{today_str}" required style="width:auto;">
+            </div>
+            <div class="form-group">
+              <label for="sched-notes">Notes <span style="color:#aaa;font-weight:400">(optional)</span></label>
+              <textarea id="sched-notes" name="notes" rows="2" placeholder="Any additional details..."></textarea>
+            </div>
+            <div style="display:flex;gap:10px;align-items:center;">
+              <button class="btn-primary" id="sched-save-btn" style="background:#7c3aed;" type="submit">Save Schedule</button>
+              <button type="button" id="sched-cancel-btn" class="back" style="border:none;background:none;cursor:pointer;">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </section>
+      <div id="sched-list" class="sched-grid"></div>
+      <p id="sched-empty" class="sched-empty" style="display:none;">No active schedules. Add one to start tracking adherence.</p>
+    </div>
   </div>
+  <script>
+    (function () {{
+      const addBtn = document.getElementById("sched-add-btn");
+      const formWrap = document.getElementById("sched-inline-form");
+      const formEl = document.getElementById("sched-form");
+      const cancelBtn = document.getElementById("sched-cancel-btn");
+      const listEl = document.getElementById("sched-list");
+      const emptyEl = document.getElementById("sched-empty");
+      const errorEl = document.getElementById("sched-error");
+      const idEl = document.getElementById("sched-id");
+      const nameEl = document.getElementById("sched-name");
+      const doseEl = document.getElementById("sched-dose");
+      const freqEl = document.getElementById("sched-frequency");
+      const startDateEl = document.getElementById("sched-start-date");
+      const notesEl = document.getElementById("sched-notes");
+      const saveBtn = document.getElementById("sched-save-btn");
+
+      function showForm(editing) {{
+        formWrap.style.display = "";
+        saveBtn.textContent = editing ? "Save Changes" : "Save Schedule";
+        errorEl.style.display = "none";
+        errorEl.textContent = "";
+      }}
+
+      function resetForm() {{
+        idEl.value = "";
+        formEl.reset();
+        startDateEl.value = "{today_str}";
+      }}
+
+      function hideForm() {{
+        formWrap.style.display = "none";
+        resetForm();
+      }}
+
+      function badgeClass(adh) {{
+        if (adh.expected === null) return "sched-badge sched-badge-prn";
+        if (adh.expected === 0 || adh.pct === null) return "sched-badge sched-badge-mid";
+        if (adh.pct >= 80) return "sched-badge sched-badge-good";
+        if (adh.pct >= 50) return "sched-badge sched-badge-mid";
+        return "sched-badge sched-badge-low";
+      }}
+
+      function badgeText(adh) {{
+        if (adh.expected === null) {{
+          const n = adh.taken || 0;
+          return `${{n}} ${{n === 1 ? "dose" : "doses"}} this week`;
+        }}
+        if (adh.expected === 0 || adh.pct === null) return "No data yet";
+        return `${{adh.pct}}% adherence (7d)`;
+      }}
+
+      function renderSchedules(items) {{
+        listEl.innerHTML = "";
+        if (!items.length) {{
+          emptyEl.style.display = "";
+          return;
+        }}
+        emptyEl.style.display = "none";
+        for (const s of items) {{
+          const card = document.createElement("article");
+          card.className = "sched-card";
+          const doseHtml = s.dose ? `<div class="sched-dose">${{escapeHtml(s.dose)}}</div>` : "";
+          const badge = `<span class="${{badgeClass(s.adherence)}}">${{badgeText(s.adherence)}}</span>`;
+          card.innerHTML = `
+            <div class="sched-name">${{escapeHtml(s.name)}}</div>
+            ${{doseHtml}}
+            <div class="sched-meta">${{escapeHtml(s.frequency_label)}}</div>
+            ${{badge}}
+            <div class="sched-actions">
+              <button type="button" class="btn-edit" data-action="edit" data-id="${{s.id}}">Edit</button>
+              <button type="button" class="btn-delete" data-action="deactivate" data-id="${{s.id}}">Deactivate</button>
+            </div>
+          `;
+          listEl.appendChild(card);
+        }}
+      }}
+
+      async function loadSchedules() {{
+        const res = await fetch("/api/medications/schedules", {{ cache: "no-store" }});
+        if (!res.ok) throw new Error("load failed");
+        const data = await res.json();
+        renderSchedules(data.schedules || []);
+      }}
+
+      function escapeHtml(v) {{
+        return (v || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+      }}
+
+      addBtn.addEventListener("click", () => {{
+        resetForm();
+        showForm(false);
+        nameEl.focus();
+      }});
+
+      cancelBtn.addEventListener("click", hideForm);
+
+      formEl.addEventListener("submit", async (e) => {{
+        e.preventDefault();
+        errorEl.style.display = "none";
+        errorEl.textContent = "";
+        const id = idEl.value.trim();
+        const url = id ? `/api/medications/schedules/${{id}}/edit` : "/api/medications/schedules";
+        const res = await fetch(url, {{
+          method: "POST",
+          body: new FormData(formEl),
+        }});
+        const payload = await res.json();
+        if (!res.ok || !payload.ok) {{
+          errorEl.textContent = payload.error || "Could not save schedule.";
+          errorEl.style.display = "";
+          return;
+        }}
+        hideForm();
+        await loadSchedules();
+      }});
+
+      listEl.addEventListener("click", async (e) => {{
+        const btn = e.target.closest("button[data-action]");
+        if (!btn) return;
+        const action = btn.getAttribute("data-action");
+        const id = btn.getAttribute("data-id");
+        if (!id) return;
+        if (action === "edit") {{
+          const res = await fetch("/api/medications/schedules", {{ cache: "no-store" }});
+          if (!res.ok) return;
+          const data = await res.json();
+          const s = (data.schedules || []).find((x) => String(x.id) === String(id));
+          if (!s) return;
+          idEl.value = String(s.id);
+          nameEl.value = s.name || "";
+          doseEl.value = s.dose || "";
+          freqEl.value = s.frequency || "once_daily";
+          startDateEl.value = s.start_date || "{today_str}";
+          notesEl.value = s.notes || "";
+          showForm(true);
+          nameEl.focus();
+          return;
+        }}
+        if (action === "deactivate") {{
+          if (!window.confirm("Stop tracking this schedule?")) return;
+          const res = await fetch(`/api/medications/schedules/${{id}}/deactivate`, {{ method: "POST" }});
+          if (!res.ok) return;
+          await loadSchedules();
+        }}
+      }});
+
+      loadSchedules().catch(() => {{
+        emptyEl.style.display = "";
+        emptyEl.textContent = "Could not load schedules.";
+      }});
+    }})();
+  </script>
 </body>
 </html>"""
+
+
+def _schedule_payload(conn, row, uid: int) -> dict:
+    s = dict(row)
+    adh = _adherence_7d(conn, s["id"], uid, s["start_date"], s["frequency"])
+    return {
+        "id": s["id"],
+        "name": s["name"],
+        "dose": s["dose"] or "",
+        "notes": s["notes"] or "",
+        "frequency": s["frequency"],
+        "frequency_label": FREQ_LABELS.get(s["frequency"], s["frequency"]),
+        "start_date": s["start_date"],
+        "adherence": adh,
+    }
+
+
+@router.get("/api/medications/schedules")
+def api_schedules_list():
+    uid = _current_user_id.get()
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, dose, notes, frequency, start_date"
+            " FROM medication_schedules WHERE user_id=? AND active=1 ORDER BY name",
+            (uid,),
+        ).fetchall()
+        items = [_schedule_payload(conn, r, uid) for r in rows]
+    return JSONResponse({"schedules": items})
+
+
+@router.post("/api/medications/schedules")
+def api_schedules_create(
+    name: str = Form(""),
+    dose: str = Form(""),
+    frequency: str = Form(""),
+    start_date: str = Form(""),
+    notes: str = Form(""),
+):
+    if not name.strip():
+        return JSONResponse({"ok": False, "error": "Medication name is required"}, status_code=400)
+    if frequency not in VALID_FREQUENCIES:
+        return JSONResponse({"ok": False, "error": "Invalid frequency"}, status_code=400)
+    try:
+        sd = date.fromisoformat(start_date)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Invalid start date"}, status_code=400)
+    if sd > date.today():
+        return JSONResponse({"ok": False, "error": "Start date cannot be in the future"}, status_code=400)
+    uid = _current_user_id.get()
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO medication_schedules (user_id, name, dose, notes, frequency, start_date, created_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (uid, name.strip(), dose.strip(), notes.strip(), frequency, start_date, created_at),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, name, dose, notes, frequency, start_date FROM medication_schedules WHERE id=? AND user_id=?",
+            (cur.lastrowid, uid),
+        ).fetchone()
+        payload = _schedule_payload(conn, row, uid)
+    return JSONResponse({"ok": True, "schedule": payload})
+
+
+@router.post("/api/medications/schedules/{sched_id}/edit")
+def api_schedules_edit(
+    sched_id: int,
+    name: str = Form(""),
+    dose: str = Form(""),
+    frequency: str = Form(""),
+    start_date: str = Form(""),
+    notes: str = Form(""),
+):
+    if not name.strip():
+        return JSONResponse({"ok": False, "error": "Medication name is required"}, status_code=400)
+    if frequency not in VALID_FREQUENCIES:
+        return JSONResponse({"ok": False, "error": "Invalid frequency"}, status_code=400)
+    try:
+        sd = date.fromisoformat(start_date)
+    except ValueError:
+        return JSONResponse({"ok": False, "error": "Invalid start date"}, status_code=400)
+    if sd > date.today():
+        return JSONResponse({"ok": False, "error": "Start date cannot be in the future"}, status_code=400)
+    uid = _current_user_id.get()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM medication_schedules WHERE id=? AND user_id=? AND active=1",
+            (sched_id, uid),
+        ).fetchone()
+        if row is None:
+            return JSONResponse({"ok": False, "error": "Schedule not found"}, status_code=404)
+        conn.execute(
+            "UPDATE medication_schedules SET name=?, dose=?, notes=?, frequency=?, start_date=? WHERE id=? AND user_id=?",
+            (name.strip(), dose.strip(), notes.strip(), frequency, start_date, sched_id, uid),
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT id, name, dose, notes, frequency, start_date FROM medication_schedules WHERE id=? AND user_id=?",
+            (sched_id, uid),
+        ).fetchone()
+        payload = _schedule_payload(conn, updated, uid)
+    return JSONResponse({"ok": True, "schedule": payload})
+
+
+@router.post("/api/medications/schedules/{sched_id}/deactivate")
+def api_schedules_deactivate(sched_id: int):
+    uid = _current_user_id.get()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE medication_schedules SET active=0 WHERE id=? AND user_id=?", (sched_id, uid)
+        )
+        conn.commit()
+    return JSONResponse({"ok": True})
 
 
 @router.get("/medications/schedules/new", response_class=HTMLResponse)
@@ -674,11 +991,12 @@ def schedules_create(
     if sd > date.today():
         return RedirectResponse(url="/medications/schedules/new?error=Start+date+cannot+be+in+the+future", status_code=303)
     uid = _current_user_id.get()
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO medication_schedules (user_id, name, dose, notes, frequency, start_date)"
-            " VALUES (?,?,?,?,?,?)",
-            (uid, name.strip(), dose.strip(), notes.strip(), frequency, start_date),
+            "INSERT INTO medication_schedules (user_id, name, dose, notes, frequency, start_date, created_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (uid, name.strip(), dose.strip(), notes.strip(), frequency, start_date, created_at),
         )
         conn.commit()
     return RedirectResponse(url="/medications/schedules", status_code=303)
@@ -797,6 +1115,7 @@ def doses_take(
     scheduled_date: str = Form(...),
     dose_num: int = Form(1),
     taken_time: str = Form(""),
+    client_now: str = Form(""),
     redirect_to: str = Form("/medications/today"),
 ):
     uid = _current_user_id.get()
@@ -805,6 +1124,11 @@ def doses_take(
     if scheduled_day is None or dose_num < 1:
         return RedirectResponse(url=redirect_to, status_code=303)
     now_dt = datetime.now()
+    if client_now.strip():
+        try:
+            now_dt = datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")
+        except ValueError:
+            pass
     taken_dt = now_dt
     if taken_time.strip():
         try:
@@ -816,13 +1140,18 @@ def doses_take(
     taken_at = taken_dt.strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
         sched = conn.execute(
-            "SELECT frequency, start_date FROM medication_schedules WHERE id=? AND user_id=?",
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
             (schedule_id, uid),
         ).fetchone()
         if not sched:
             return RedirectResponse(url=redirect_to, status_code=303)
         sched_start = date.fromisoformat(sched["start_date"])
         if scheduled_day < sched_start:
+            return RedirectResponse(url=redirect_to, status_code=303)
+        created_at = _parse_created_at(sched["created_at"])
+        if created_at and scheduled_day < created_at.date():
+            return RedirectResponse(url=redirect_to, status_code=303)
+        if created_at and scheduled_day == created_at.date() and taken_dt < created_at:
             return RedirectResponse(url=redirect_to, status_code=303)
         dpd = _doses_per_day(sched["frequency"])
         if dpd > 0 and dose_num > dpd:
@@ -854,13 +1183,16 @@ def doses_miss(
         return RedirectResponse(url=redirect_to, status_code=303)
     with get_db() as conn:
         sched = conn.execute(
-            "SELECT frequency, start_date FROM medication_schedules WHERE id=? AND user_id=?",
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
             (schedule_id, uid),
         ).fetchone()
         if not sched:
             return RedirectResponse(url=redirect_to, status_code=303)
         sched_start = date.fromisoformat(sched["start_date"])
         if scheduled_day < sched_start:
+            return RedirectResponse(url=redirect_to, status_code=303)
+        created_at = _parse_created_at(sched["created_at"])
+        if created_at and scheduled_day < created_at.date():
             return RedirectResponse(url=redirect_to, status_code=303)
         dpd = _doses_per_day(sched["frequency"])
         if dpd > 0 and dose_num > dpd:
@@ -892,13 +1224,16 @@ def doses_undo(
         return RedirectResponse(url=redirect_to, status_code=303)
     with get_db() as conn:
         sched = conn.execute(
-            "SELECT frequency, start_date FROM medication_schedules WHERE id=? AND user_id=?",
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
             (schedule_id, uid),
         ).fetchone()
         if not sched:
             return RedirectResponse(url=redirect_to, status_code=303)
         sched_start = date.fromisoformat(sched["start_date"])
         if scheduled_day < sched_start:
+            return RedirectResponse(url=redirect_to, status_code=303)
+        created_at = _parse_created_at(sched["created_at"])
+        if created_at and scheduled_day < created_at.date():
             return RedirectResponse(url=redirect_to, status_code=303)
         dpd = _doses_per_day(sched["frequency"])
         if dpd > 0 and dose_num > dpd:

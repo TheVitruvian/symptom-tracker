@@ -37,7 +37,7 @@ def _entry_error_url(base_path: str, message: str) -> str:
 
 
 def _validate_medication_entry(
-    name: str, dose: str, notes: str, med_date: str
+    name: str, dose: str, notes: str, med_date: str, client_now: str = ""
 ) -> Tuple[Optional[str], Optional[datetime]]:
     if not name.strip():
         return ("Medication name is required", None)
@@ -51,7 +51,13 @@ def _validate_medication_entry(
         ts_dt = datetime.strptime(med_date, "%Y-%m-%dT%H:%M")
     except ValueError:
         return ("Invalid date format", None)
-    if ts_dt > datetime.now():
+    now_ref = datetime.now()
+    if client_now.strip():
+        try:
+            now_ref = datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")
+        except ValueError:
+            pass
+    if ts_dt > now_ref:
         return ("Date cannot be in the future", None)
     return (None, ts_dt)
 
@@ -248,6 +254,7 @@ def medications_new(error: str = ""):
     {error_html}
     <div class="card">
       <form method="post" action="/medications">
+        <input type="hidden" id="client_now" name="client_now" value="">
         <div class="form-group">
           <label for="med_name">Medication name <span style="color:#ef4444">*</span></label>
           <input type="text" id="med_name" name="name"
@@ -277,6 +284,12 @@ def medications_new(error: str = ""):
     const localStr = local.toISOString().slice(0, 16);
     document.getElementById("med_date").value = localStr;
     document.getElementById("med_date").max = localStr;
+    document.getElementById("client_now").value = localStr;
+    document.querySelector('form[action="/medications"]').addEventListener("submit", () => {{
+      const n = new Date();
+      const l = new Date(n.getTime() - n.getTimezoneOffset() * 60000);
+      document.getElementById("client_now").value = l.toISOString().slice(0, 16);
+    }});
   </script>
 </body>
 </html>
@@ -289,8 +302,9 @@ def medications_create(
     dose: str = Form(""),
     notes: str = Form(""),
     med_date: str = Form(...),
+    client_now: str = Form(""),
 ):
-    error, ts_dt = _validate_medication_entry(name, dose, notes, med_date)
+    error, ts_dt = _validate_medication_entry(name, dose, notes, med_date, client_now)
     if error:
         return RedirectResponse(url=_entry_error_url("/medications/new", error), status_code=303)
     timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -335,6 +349,7 @@ def medications_edit_get(med_id: int, error: str = ""):
     {error_html}
     <div class="card">
       <form method="post" action="/medications/{med_id}/edit">
+        <input type="hidden" id="client_now" name="client_now" value="">
         <div class="form-group">
           <label for="med_name">Medication name <span style="color:#ef4444">*</span></label>
           <input type="text" id="med_name" name="name" value="{html.escape(m['name'])}"
@@ -365,6 +380,12 @@ def medications_edit_get(med_id: int, error: str = ""):
     const _now = new Date();
     const _local = new Date(_now.getTime() - _now.getTimezoneOffset() * 60000);
     document.getElementById("med_date").max = _local.toISOString().slice(0, 16);
+    document.getElementById("client_now").value = _local.toISOString().slice(0, 16);
+    document.querySelector('form[action="/medications/{med_id}/edit"]').addEventListener("submit", () => {{
+      const n = new Date();
+      const l = new Date(n.getTime() - n.getTimezoneOffset() * 60000);
+      document.getElementById("client_now").value = l.toISOString().slice(0, 16);
+    }});
   </script>
 </body>
 </html>"""
@@ -377,8 +398,9 @@ def medications_edit_post(
     dose: str = Form(""),
     notes: str = Form(""),
     med_date: str = Form(...),
+    client_now: str = Form(""),
 ):
-    error, ts_dt = _validate_medication_entry(name, dose, notes, med_date)
+    error, ts_dt = _validate_medication_entry(name, dose, notes, med_date, client_now)
     if error:
         return RedirectResponse(
             url=_entry_error_url(f"/medications/{med_id}/edit", error), status_code=303
