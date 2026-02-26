@@ -314,11 +314,12 @@ def symptoms_chart():
       "#06b6d4","#eab308","#ec4899","#14b8a6","#f43f5e","#8b5cf6","#84cc16"
     ];
     const MED_PALETTE = ["#7c3aed","#9333ea","#a855f7","#6d28d9","#c026d3","#0ea5e9","#0f766e","#b45309"];
-    function showMedTooltip(e, name, dose, time) {{
+    function showMedTooltip(e, name, dose, time, note) {{
       const tip = document.getElementById("med-tooltip");
       let html = `<strong>${{escHtml(name)}}</strong>`;
       if (dose) html += `<br>${{escHtml(dose)}}`;
-      html += `<br>${{time}}`;
+      if (note) html += `<br>${{escHtml(note)}}`;
+      else html += `<br>${{time}}`;
       tip.innerHTML = html;
       tip.style.display = "block";
       tip.style.left = (e.clientX + 14) + "px";
@@ -350,6 +351,18 @@ def symptoms_chart():
       document.getElementById("control-tooltip").style.display = "none";
     }}
 
+    let _controlTipShowTimer = null;
+    let _controlTipHideTimer = null;
+    function queueControlTip(target) {{
+      if (_controlTipHideTimer) clearTimeout(_controlTipHideTimer);
+      if (_controlTipShowTimer) clearTimeout(_controlTipShowTimer);
+      _controlTipShowTimer = setTimeout(() => showControlTip(target), 220);
+    }}
+    function queueHideControlTip() {{
+      if (_controlTipShowTimer) clearTimeout(_controlTipShowTimer);
+      _controlTipHideTimer = setTimeout(() => hideControlTip(), 120);
+    }}
+
     function openChartModal() {{
       if (!document.getElementById("chart-wrapper")) return;
       document.body.classList.add("chart-modal-open");
@@ -365,15 +378,16 @@ def symptoms_chart():
       ["smooth-btn", "bucket-btn"].forEach((id) => {{
         const el = document.getElementById(id);
         if (!el) return;
-        el.addEventListener("mouseenter", () => showControlTip(el));
-        el.addEventListener("focus", () => showControlTip(el));
-        el.addEventListener("mouseleave", hideControlTip);
-        el.addEventListener("blur", hideControlTip);
+        el.addEventListener("mouseenter", () => queueControlTip(el));
+        el.addEventListener("focus", () => queueControlTip(el));
+        el.addEventListener("mouseleave", queueHideControlTip);
+        el.addEventListener("blur", queueHideControlTip);
       }});
       document.addEventListener("keydown", (ev) => {{
         if (ev.key === "Escape" && document.body.classList.contains("chart-modal-open")) {{
           closeChartModal();
         }}
+        if (ev.key === "Escape") hideControlTip();
       }});
     }}
 
@@ -853,7 +867,7 @@ def symptoms_chart():
             borderWidth: 1.5,
             borderDash: [5, 4],
             display: false,
-            enter(ctx, event) {{ showMedTooltip(event.native, name, m.dose, m.timestamp.slice(11, 16)); }},
+            enter(ctx, event) {{ showMedTooltip(event.native, name, m.dose, m.timestamp.slice(11, 16), m.notes || ""); }},
             leave() {{ hideMedTooltip(); }},
           }};
         }});
@@ -935,10 +949,18 @@ def symptoms_chart():
             const bg = pct >= 80 ? "#dcfce7;color:#15803d" : pct >= 50 ? "#fef9c3;color:#92400e" : "#fee2e2;color:#b91c1c";
             badge.textContent = " " + pct + "%";
             badge.style.cssText = "font-size:11px;background:" + bg + ";border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;";
+            badge.setAttribute("data-help", `${{name}} adherence over last 7 days: ${{pct}}% (${{adh.taken_7d}}/${{adh.expected_7d}} doses taken)`);
           }} else {{
             badge.textContent = " " + adh.taken_7d + "\u00d7";
             badge.style.cssText = "font-size:11px;background:#ede9fe;color:#7c3aed;border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;";
+            badge.setAttribute("data-help", `${{name}} PRN logs over last 7 days: ${{adh.taken_7d}}`);
           }}
+          badge.style.cursor = "help";
+          badge.tabIndex = 0;
+          badge.addEventListener("mouseenter", () => queueControlTip(badge));
+          badge.addEventListener("focus", () => queueControlTip(badge));
+          badge.addEventListener("mouseleave", queueHideControlTip);
+          badge.addEventListener("blur", queueHideControlTip);
           btn.appendChild(badge);
         }}
         btn.style.cssText = `display:inline-flex;align-items:center;gap:5px;padding:4px 12px;`

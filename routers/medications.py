@@ -71,16 +71,17 @@ def api_medications():
             " WHERE user_id = ? ORDER BY timestamp ASC",
             (uid,),
         ).fetchall()
-        taken = conn.execute(
-            "SELECT md.id, ms.name, ms.dose, '' AS notes, md.taken_at AS timestamp"
+        missed = conn.execute(
+            "SELECT md.id, ms.name, ms.dose, 'Medication missed' AS notes,"
+            " md.scheduled_date || ' 00:00:00' AS timestamp"
             " FROM medication_doses md"
             " JOIN medication_schedules ms ON ms.id = md.schedule_id AND ms.user_id = md.user_id"
-            " WHERE md.user_id=? AND md.status='taken' AND md.taken_at != ''"
-            " ORDER BY md.taken_at ASC",
+            " WHERE md.user_id=? AND md.status='missed'"
+            " ORDER BY md.scheduled_date ASC",
             (uid,),
         ).fetchall()
     result = sorted(
-        [dict(r) for r in adhoc] + [dict(r) for r in taken],
+        [dict(r) for r in adhoc] + [dict(r) for r in missed],
         key=lambda r: r["timestamp"],
     )
     return JSONResponse({"medications": result})

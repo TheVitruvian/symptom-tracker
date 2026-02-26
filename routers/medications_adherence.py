@@ -1311,5 +1311,6 @@ def api_medications_adherence():
                 "frequency": s["frequency"],
                 "adherence_7d_pct": adh["pct"],
                 "taken_7d": adh["taken"],
+                "expected_7d": adh["expected"],
             })
     return JSONResponse({"schedules": result})
