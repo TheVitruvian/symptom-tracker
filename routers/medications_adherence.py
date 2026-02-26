@@ -192,7 +192,7 @@ def medications_today(d: str = ""):
             prn_undo_html = ""
             if prn_count > 0:
                 prn_undo_html = f"""
-                  <form method="post" action="/medications/doses/undo" style="margin:0;">
+                  <form method="post" action="/medications/doses/undo" class="dose-action-form" style="margin:0;">
                     <input type="hidden" name="schedule_id" value="{sid}">
                     <input type="hidden" name="scheduled_date" value="{day_str}">
                     <input type="hidden" name="dose_num" value="{prn_count}">
@@ -209,7 +209,7 @@ def medications_today(d: str = ""):
                 <div class="dose-chip dose-chip-neutral">Logged: {prn_count} {prn_word}</div>
               </div>
               <div class="dose-actions">
-                <form method="post" action="/medications/doses/take" style="margin:0;">
+                <form method="post" action="/medications/doses/take" class="dose-action-form" style="margin:0;">
                   <input type="hidden" name="schedule_id" value="{sid}">
                   <input type="hidden" name="scheduled_date" value="{day_str}">
                   <input type="hidden" name="dose_num" value="{prn_count + 1}">
@@ -219,7 +219,7 @@ def medications_today(d: str = ""):
                 <details class="dose-more">
                   <summary>More options</summary>
                   <div class="dose-more-actions">
-                    <form method="post" action="/medications/doses/take" class="dose-time-form">
+                    <form method="post" action="/medications/doses/take" class="dose-time-form dose-action-form">
                       <input type="hidden" name="schedule_id" value="{sid}">
                       <input type="hidden" name="scheduled_date" value="{day_str}">
                       <input type="hidden" name="dose_num" value="{prn_count + 1}">
@@ -254,7 +254,7 @@ def medications_today(d: str = ""):
                     status_and_actions = (
                         f'<div class="status-row">'
                         f'<div class="dose-chip dose-chip-taken">&#10003; Taken{f" at {t}" if t else ""}</div>'
-                        f'<form method="post" action="/medications/doses/undo" style="margin:0;">'
+                        f'<form method="post" action="/medications/doses/undo" class="dose-action-form" style="margin:0;">'
                         f'<input type="hidden" name="schedule_id" value="{sid}">'
                         f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                         f'<input type="hidden" name="dose_num" value="{dn}">'
@@ -268,7 +268,7 @@ def medications_today(d: str = ""):
                     status_and_actions = (
                         f'<div class="status-row">'
                         f'<div class="dose-chip dose-chip-missed">&#10007; Missed</div>'
-                        f'<form method="post" action="/medications/doses/undo" style="margin:0;">'
+                        f'<form method="post" action="/medications/doses/undo" class="dose-action-form" style="margin:0;">'
                         f'<input type="hidden" name="schedule_id" value="{sid}">'
                         f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                         f'<input type="hidden" name="dose_num" value="{dn}">'
@@ -281,7 +281,7 @@ def medications_today(d: str = ""):
                 scheduled_pending += 1
                 status_and_actions = (
                     f'<div class="dose-chip dose-chip-pending">Pending</div>'
-                    f'<form method="post" action="/medications/doses/take" style="margin:0;">'
+                    f'<form method="post" action="/medications/doses/take" class="dose-action-form" style="margin:0;">'
                     f'<input type="hidden" name="schedule_id" value="{sid}">'
                     f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                     f'<input type="hidden" name="dose_num" value="{dn}">'
@@ -291,7 +291,7 @@ def medications_today(d: str = ""):
                     f'<details class="dose-more">'
                     f'<summary>More options</summary>'
                     f'<div class="dose-more-actions">'
-                    f'<form method="post" action="/medications/doses/take" class="dose-time-form">'
+                    f'<form method="post" action="/medications/doses/take" class="dose-time-form dose-action-form">'
                     f'<input type="hidden" name="schedule_id" value="{sid}">'
                     f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                     f'<input type="hidden" name="dose_num" value="{dn}">'
@@ -299,7 +299,7 @@ def medications_today(d: str = ""):
                     f'<input type="time" name="taken_time" data-date="{day_str}" class="dose-time dose-time-input">'
                     f'<button type="submit" class="dose-btn dose-btn-secondary">Take with time</button>'
                     f'</form>'
-                    f'<form method="post" action="/medications/doses/miss" style="margin:0;">'
+                    f'<form method="post" action="/medications/doses/miss" class="dose-action-form" style="margin:0;">'
                     f'<input type="hidden" name="schedule_id" value="{sid}">'
                     f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                     f'<input type="hidden" name="dose_num" value="{dn}">'
@@ -429,19 +429,61 @@ def medications_today(d: str = ""):
   </div>
   <script>
     (function () {{
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2, "0");
-      const mm = String(now.getMinutes()).padStart(2, "0");
-      const nowTime = `${{hh}}:${{mm}}`;
-      const yyyy = now.getFullYear();
-      const mo = String(now.getMonth() + 1).padStart(2, "0");
-      const dd = String(now.getDate()).padStart(2, "0");
-      const today = `${{yyyy}}-${{mo}}-${{dd}}`;
-      document.querySelectorAll("input.dose-time[data-date]").forEach((el) => {{
-        const d = el.getAttribute("data-date") || "";
-        if (!el.value) el.value = d === today ? nowTime : "08:00";
-        if (d === today) el.max = nowTime;
+      function initDoseTimeInputs(root) {{
+        const now = new Date();
+        const hh = String(now.getHours()).padStart(2, "0");
+        const mm = String(now.getMinutes()).padStart(2, "0");
+        const nowTime = `${{hh}}:${{mm}}`;
+        const yyyy = now.getFullYear();
+        const mo = String(now.getMonth() + 1).padStart(2, "0");
+        const dd = String(now.getDate()).padStart(2, "0");
+        const today = `${{yyyy}}-${{mo}}-${{dd}}`;
+        root.querySelectorAll("input.dose-time[data-date]").forEach((el) => {{
+          const d = el.getAttribute("data-date") || "";
+          if (!el.value) el.value = d === today ? nowTime : "08:00";
+          if (d === today) el.max = nowTime;
+        }});
+      }}
+
+      async function refreshTodayShell() {{
+        const res = await fetch(window.location.pathname + window.location.search, {{
+          headers: {{ "X-Requested-With": "fetch" }},
+          cache: "no-store",
+        }});
+        if (!res.ok) throw new Error("refresh failed");
+        const html = await res.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        const nextShell = doc.querySelector(".today-shell");
+        const currentShell = document.querySelector(".today-shell");
+        if (!nextShell || !currentShell) throw new Error("shell missing");
+        currentShell.replaceWith(nextShell);
+        initDoseTimeInputs(document);
+      }}
+
+      document.addEventListener("submit", async (e) => {{
+        const form = e.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        if (!form.classList.contains("dose-action-form")) return;
+        e.preventDefault();
+        const submitBtn = form.querySelector('button[type="submit"]');
+        if (submitBtn) submitBtn.disabled = true;
+        try {{
+          const res = await fetch(form.action, {{
+            method: "POST",
+            body: new FormData(form),
+            headers: {{ "X-Requested-With": "fetch" }},
+          }});
+          if (!res.ok) throw new Error("action failed");
+          await refreshTodayShell();
+        }} catch (_) {{
+          window.location.href = window.location.pathname + window.location.search;
+        }} finally {{
+          if (submitBtn) submitBtn.disabled = false;
+        }}
       }});
+
+      initDoseTimeInputs(document);
     }})();
   </script>
 </body>
