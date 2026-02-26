@@ -23,6 +23,23 @@ def _doses_per_day(frequency: str) -> int:
     return {"once_daily": 1, "twice_daily": 2, "three_daily": 3, "prn": 0}[frequency]
 
 
+def _safe_meds_redirect(redirect_to: str) -> str:
+    val = (redirect_to or "").strip()
+    if not val.startswith("/medications"):
+        return "/medications/today"
+    return val
+
+
+def _parse_valid_scheduled_date(scheduled_date: str):
+    try:
+        d = date.fromisoformat((scheduled_date or "").strip())
+    except ValueError:
+        return None
+    if d > date.today():
+        return None
+    return d
+
+
 def _dose_label(dose_num: int, total: int) -> str:
     if total == 1:
         return "Daily dose"
@@ -180,7 +197,9 @@ def medications_today(d: str = ""):
                     <input type="hidden" name="scheduled_date" value="{day_str}">
                     <input type="hidden" name="dose_num" value="{prn_count}">
                     <input type="hidden" name="redirect_to" value="{redirect_to}">
-                    <button type="submit" class="dose-btn dose-btn-secondary">Undo last</button>
+                    <button type="submit" class="dose-btn dose-btn-secondary dose-btn-x" aria-label="Undo last PRN entry" title="Undo">
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6L18 18M18 6L6 18"/></svg>
+                    </button>
                   </form>"""
             prn_rows += f"""
             <article class="med-row">
@@ -233,26 +252,30 @@ def medications_today(d: str = ""):
                     scheduled_taken += 1
                     t = record["taken_at"][11:16] if record["taken_at"] else ""
                     status_and_actions = (
+                        f'<div class="status-row">'
                         f'<div class="dose-chip dose-chip-taken">&#10003; Taken{f" at {t}" if t else ""}</div>'
                         f'<form method="post" action="/medications/doses/undo" style="margin:0;">'
                         f'<input type="hidden" name="schedule_id" value="{sid}">'
                         f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                         f'<input type="hidden" name="dose_num" value="{dn}">'
                         f'<input type="hidden" name="redirect_to" value="{redirect_to}">'
-                        f'<button type="submit" class="dose-btn dose-btn-secondary">Undo</button>'
+                        f'<button type="submit" class="dose-btn dose-btn-x" aria-label="Undo dose" title="Undo"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6L18 18M18 6L6 18"/></svg></button>'
                         f'</form>'
+                        f'</div>'
                     )
                 else:
                     scheduled_missed += 1
                     status_and_actions = (
+                        f'<div class="status-row">'
                         f'<div class="dose-chip dose-chip-missed">&#10007; Missed</div>'
                         f'<form method="post" action="/medications/doses/undo" style="margin:0;">'
                         f'<input type="hidden" name="schedule_id" value="{sid}">'
                         f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                         f'<input type="hidden" name="dose_num" value="{dn}">'
                         f'<input type="hidden" name="redirect_to" value="{redirect_to}">'
-                        f'<button type="submit" class="dose-btn dose-btn-secondary">Undo</button>'
+                        f'<button type="submit" class="dose-btn dose-btn-x" aria-label="Undo dose" title="Undo"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6L18 18M18 6L6 18"/></svg></button>'
                         f'</form>'
+                        f'</div>'
                     )
             else:
                 scheduled_pending += 1
@@ -352,6 +375,11 @@ def medications_today(d: str = ""):
     .dose-btn-secondary:hover {{ background:#f9fafb; }}
     .dose-btn-ghost {{ background:#fff; color:#b91c1c; border:1px solid #fca5a5; }}
     .dose-btn-ghost:hover {{ background:#fff1f2; }}
+    .status-row {{ display:flex; align-items:center; gap:6px; }}
+    .status-row .dose-chip {{ min-height:22px; display:inline-flex; align-items:center; padding:0 8px; }}
+    .dose-btn-x {{ width:22px; min-width:22px; min-height:22px; padding:0; border:1px solid #ef4444; background:#ef4444; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; }}
+    .dose-btn-x:hover {{ background:#dc2626; border-color:#dc2626; }}
+    .dose-btn-x svg {{ width:10px; height:10px; stroke:#ffffff; stroke-width:2.5; fill:none; stroke-linecap:round; }}
     .dose-more {{ width:100%; }}
     .dose-more summary {{ cursor:pointer; font-size:11px; color:#6b7280; user-select:none; }}
     .dose-more-actions {{ margin-top:6px; display:flex; flex-direction:column; gap:6px; }}
@@ -671,29 +699,41 @@ def doses_take(
     redirect_to: str = Form("/medications/today"),
 ):
     uid = _current_user_id.get()
+    redirect_to = _safe_meds_redirect(redirect_to)
+    scheduled_day = _parse_valid_scheduled_date(scheduled_date)
+    if scheduled_day is None or dose_num < 1:
+        return RedirectResponse(url=redirect_to, status_code=303)
     now_dt = datetime.now()
     taken_dt = now_dt
     if taken_time.strip():
         try:
-            taken_dt = datetime.strptime(f"{scheduled_date} {taken_time.strip()}", "%Y-%m-%d %H:%M")
+            taken_dt = datetime.strptime(f"{scheduled_day.isoformat()} {taken_time.strip()}", "%Y-%m-%d %H:%M")
         except ValueError:
             return RedirectResponse(url=redirect_to, status_code=303)
         if taken_dt > now_dt:
             return RedirectResponse(url=redirect_to, status_code=303)
     taken_at = taken_dt.strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
-        if not conn.execute(
-            "SELECT id FROM medication_schedules WHERE id=? AND user_id=?", (schedule_id, uid)
-        ).fetchone():
+        sched = conn.execute(
+            "SELECT frequency, start_date FROM medication_schedules WHERE id=? AND user_id=?",
+            (schedule_id, uid),
+        ).fetchone()
+        if not sched:
+            return RedirectResponse(url=redirect_to, status_code=303)
+        sched_start = date.fromisoformat(sched["start_date"])
+        if scheduled_day < sched_start:
+            return RedirectResponse(url=redirect_to, status_code=303)
+        dpd = _doses_per_day(sched["frequency"])
+        if dpd > 0 and dose_num > dpd:
             return RedirectResponse(url=redirect_to, status_code=303)
         conn.execute(
             "DELETE FROM medication_doses WHERE schedule_id=? AND user_id=? AND scheduled_date=? AND dose_num=?",
-            (schedule_id, uid, scheduled_date, dose_num),
+            (schedule_id, uid, scheduled_day.isoformat(), dose_num),
         )
         conn.execute(
             "INSERT INTO medication_doses (schedule_id, user_id, scheduled_date, dose_num, taken_at, status)"
             " VALUES (?,?,?,?,?,'taken')",
-            (schedule_id, uid, scheduled_date, dose_num, taken_at),
+            (schedule_id, uid, scheduled_day.isoformat(), dose_num, taken_at),
         )
         conn.commit()
     return RedirectResponse(url=redirect_to, status_code=303)
@@ -707,19 +747,31 @@ def doses_miss(
     redirect_to: str = Form("/medications/today"),
 ):
     uid = _current_user_id.get()
+    redirect_to = _safe_meds_redirect(redirect_to)
+    scheduled_day = _parse_valid_scheduled_date(scheduled_date)
+    if scheduled_day is None or dose_num < 1:
+        return RedirectResponse(url=redirect_to, status_code=303)
     with get_db() as conn:
-        if not conn.execute(
-            "SELECT id FROM medication_schedules WHERE id=? AND user_id=?", (schedule_id, uid)
-        ).fetchone():
+        sched = conn.execute(
+            "SELECT frequency, start_date FROM medication_schedules WHERE id=? AND user_id=?",
+            (schedule_id, uid),
+        ).fetchone()
+        if not sched:
+            return RedirectResponse(url=redirect_to, status_code=303)
+        sched_start = date.fromisoformat(sched["start_date"])
+        if scheduled_day < sched_start:
+            return RedirectResponse(url=redirect_to, status_code=303)
+        dpd = _doses_per_day(sched["frequency"])
+        if dpd > 0 and dose_num > dpd:
             return RedirectResponse(url=redirect_to, status_code=303)
         conn.execute(
             "DELETE FROM medication_doses WHERE schedule_id=? AND user_id=? AND scheduled_date=? AND dose_num=?",
-            (schedule_id, uid, scheduled_date, dose_num),
+            (schedule_id, uid, scheduled_day.isoformat(), dose_num),
         )
         conn.execute(
             "INSERT INTO medication_doses (schedule_id, user_id, scheduled_date, dose_num, taken_at, status)"
             " VALUES (?,?,?,?,'','missed')",
-            (schedule_id, uid, scheduled_date, dose_num),
+            (schedule_id, uid, scheduled_day.isoformat(), dose_num),
         )
         conn.commit()
     return RedirectResponse(url=redirect_to, status_code=303)
@@ -733,14 +785,26 @@ def doses_undo(
     redirect_to: str = Form("/medications/today"),
 ):
     uid = _current_user_id.get()
+    redirect_to = _safe_meds_redirect(redirect_to)
+    scheduled_day = _parse_valid_scheduled_date(scheduled_date)
+    if scheduled_day is None or dose_num < 1:
+        return RedirectResponse(url=redirect_to, status_code=303)
     with get_db() as conn:
-        if not conn.execute(
-            "SELECT id FROM medication_schedules WHERE id=? AND user_id=?", (schedule_id, uid)
-        ).fetchone():
+        sched = conn.execute(
+            "SELECT frequency, start_date FROM medication_schedules WHERE id=? AND user_id=?",
+            (schedule_id, uid),
+        ).fetchone()
+        if not sched:
+            return RedirectResponse(url=redirect_to, status_code=303)
+        sched_start = date.fromisoformat(sched["start_date"])
+        if scheduled_day < sched_start:
+            return RedirectResponse(url=redirect_to, status_code=303)
+        dpd = _doses_per_day(sched["frequency"])
+        if dpd > 0 and dose_num > dpd:
             return RedirectResponse(url=redirect_to, status_code=303)
         conn.execute(
             "DELETE FROM medication_doses WHERE schedule_id=? AND user_id=? AND scheduled_date=? AND dose_num=?",
-            (schedule_id, uid, scheduled_date, dose_num),
+            (schedule_id, uid, scheduled_day.isoformat(), dose_num),
         )
         conn.commit()
     return RedirectResponse(url=redirect_to, status_code=303)

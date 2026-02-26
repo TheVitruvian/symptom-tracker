@@ -1,5 +1,7 @@
 import html
+from urllib.parse import quote_plus
 from datetime import date, datetime, timedelta
+from typing import Optional, Tuple
 
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -24,6 +26,34 @@ MEDICATION_SUGGESTIONS = [
     "Melatonin", "Vitamin D", "Fish Oil", "Magnesium",
 ]
 _MED_DATALIST = "".join(f'<option value="{html.escape(med)}">' for med in MEDICATION_SUGGESTIONS)
+
+MAX_MED_NAME_LEN = 120
+MAX_DOSE_LEN = 80
+MAX_NOTES_LEN = 1000
+
+
+def _entry_error_url(base_path: str, message: str) -> str:
+    return f"{base_path}?error={quote_plus(message)}"
+
+
+def _validate_medication_entry(
+    name: str, dose: str, notes: str, med_date: str
+) -> Tuple[Optional[str], Optional[datetime]]:
+    if not name.strip():
+        return ("Medication name is required", None)
+    if len(name.strip()) > MAX_MED_NAME_LEN:
+        return (f"Medication name must be {MAX_MED_NAME_LEN} characters or fewer", None)
+    if len(dose.strip()) > MAX_DOSE_LEN:
+        return (f"Dose must be {MAX_DOSE_LEN} characters or fewer", None)
+    if len(notes.strip()) > MAX_NOTES_LEN:
+        return (f"Notes must be {MAX_NOTES_LEN} characters or fewer", None)
+    try:
+        ts_dt = datetime.strptime(med_date, "%Y-%m-%dT%H:%M")
+    except ValueError:
+        return ("Invalid date format", None)
+    if ts_dt > datetime.now():
+        return ("Date cannot be in the future", None)
+    return (None, ts_dt)
 
 
 @router.get("/api/medications")
@@ -222,16 +252,16 @@ def medications_new(error: str = ""):
           <label for="med_name">Medication name <span style="color:#ef4444">*</span></label>
           <input type="text" id="med_name" name="name"
             placeholder="e.g. Ibuprofen (Advil/Motrin)" required
-            list="med-suggestions" autocomplete="off">
+            list="med-suggestions" autocomplete="off" maxlength="{MAX_MED_NAME_LEN}">
           <datalist id="med-suggestions">{_MED_DATALIST}</datalist>
         </div>
         <div class="form-group">
           <label for="dose">Dose <span style="color:#aaa;font-weight:400">(optional)</span></label>
-          <input type="text" id="dose" name="dose" placeholder="e.g. 400mg, 10mg twice daily">
+          <input type="text" id="dose" name="dose" placeholder="e.g. 400mg, 10mg twice daily" maxlength="{MAX_DOSE_LEN}">
         </div>
         <div class="form-group">
           <label for="notes">Notes <span style="color:#aaa;font-weight:400">(optional)</span></label>
-          <textarea id="notes" name="notes" rows="2" placeholder="Any additional details..."></textarea>
+          <textarea id="notes" name="notes" rows="2" placeholder="Any additional details..." maxlength="{MAX_NOTES_LEN}"></textarea>
         </div>
         <div class="form-group">
           <label for="med_date">Date &amp; time <span style="color:#aaa;font-weight:400">(defaults to now)</span></label>
@@ -260,14 +290,9 @@ def medications_create(
     notes: str = Form(""),
     med_date: str = Form(...),
 ):
-    if not name.strip():
-        return RedirectResponse(url="/medications/new?error=Medication+name+is+required", status_code=303)
-    try:
-        ts_dt = datetime.strptime(med_date, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return RedirectResponse(url="/medications/new?error=Invalid+date+format", status_code=303)
-    if ts_dt > datetime.now():
-        return RedirectResponse(url="/medications/new?error=Date+cannot+be+in+the+future", status_code=303)
+    error, ts_dt = _validate_medication_entry(name, dose, notes, med_date)
+    if error:
+        return RedirectResponse(url=_entry_error_url("/medications/new", error), status_code=303)
     timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
     uid = _current_user_id.get()
     with get_db() as conn:
@@ -313,16 +338,16 @@ def medications_edit_get(med_id: int, error: str = ""):
         <div class="form-group">
           <label for="med_name">Medication name <span style="color:#ef4444">*</span></label>
           <input type="text" id="med_name" name="name" value="{html.escape(m['name'])}"
-            required list="med-suggestions" autocomplete="off">
+            required list="med-suggestions" autocomplete="off" maxlength="{MAX_MED_NAME_LEN}">
           <datalist id="med-suggestions">{_MED_DATALIST}</datalist>
         </div>
         <div class="form-group">
           <label for="dose">Dose <span style="color:#aaa;font-weight:400">(optional)</span></label>
-          <input type="text" id="dose" name="dose" value="{html.escape(m['dose'])}">
+          <input type="text" id="dose" name="dose" value="{html.escape(m['dose'])}" maxlength="{MAX_DOSE_LEN}">
         </div>
         <div class="form-group">
           <label for="notes">Notes <span style="color:#aaa;font-weight:400">(optional)</span></label>
-          <textarea id="notes" name="notes" rows="2">{html.escape(m['notes'])}</textarea>
+          <textarea id="notes" name="notes" rows="2" maxlength="{MAX_NOTES_LEN}">{html.escape(m['notes'])}</textarea>
         </div>
         <div class="form-group">
           <label for="med_date">Date &amp; time</label>
@@ -353,19 +378,10 @@ def medications_edit_post(
     notes: str = Form(""),
     med_date: str = Form(...),
 ):
-    if not name.strip():
+    error, ts_dt = _validate_medication_entry(name, dose, notes, med_date)
+    if error:
         return RedirectResponse(
-            url=f"/medications/{med_id}/edit?error=Medication+name+is+required", status_code=303
-        )
-    try:
-        ts_dt = datetime.strptime(med_date, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return RedirectResponse(
-            url=f"/medications/{med_id}/edit?error=Invalid+date+format", status_code=303
-        )
-    if ts_dt > datetime.now():
-        return RedirectResponse(
-            url=f"/medications/{med_id}/edit?error=Date+cannot+be+in+the+future", status_code=303
+            url=_entry_error_url(f"/medications/{med_id}/edit", error), status_code=303
         )
     timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
     uid = _current_user_id.get()
