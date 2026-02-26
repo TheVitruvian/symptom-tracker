@@ -476,6 +476,12 @@ def medications_today(d: str = "", w_end: str = ""):
   </div>
   <script>
     (function () {{
+      function clientLocalDateISO() {{
+        const now = new Date();
+        const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+        return local.toISOString().slice(0, 10);
+      }}
+
       function initDoseTimeInputs(root) {{
         const now = new Date();
         const hh = String(now.getHours()).padStart(2, "0");
@@ -508,6 +514,18 @@ def medications_today(d: str = "", w_end: str = ""):
         currentShell.replaceWith(nextShell);
         if (pushState) window.history.pushState({{}}, "", targetUrl);
         initDoseTimeInputs(document);
+      }}
+
+      async function ensureClientDateDefaults() {{
+        const u = new URL(window.location.href);
+        const hasD = !!u.searchParams.get("d");
+        const hasWEnd = !!u.searchParams.get("w_end");
+        if (hasD && hasWEnd) return;
+        const clientDate = clientLocalDateISO();
+        u.searchParams.set("d", clientDate);
+        u.searchParams.set("w_end", clientDate);
+        window.history.replaceState({{}}, "", u.pathname + u.search);
+        await refreshTodayShell(u.pathname + u.search, false);
       }}
 
       function setDayTabActive(href) {{
@@ -569,6 +587,7 @@ def medications_today(d: str = "", w_end: str = ""):
       }});
 
       initDoseTimeInputs(document);
+      ensureClientDateDefaults().catch(() => {{}});
     }})();
   </script>
 </body>
