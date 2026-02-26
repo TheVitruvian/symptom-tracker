@@ -11,6 +11,15 @@ from ui import PAGE_STYLE, _nav_bar, _sidebar, _severity_color
 router = APIRouter()
 
 
+def _client_now_or_server(client_now: str) -> datetime:
+    if client_now.strip():
+        try:
+            return datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")
+        except ValueError:
+            pass
+    return datetime.now()
+
+
 def _fmt_duration(start_str: str, end_str: str) -> str:
     """Return a human-readable duration string for a symptom entry."""
     if not end_str:
@@ -206,6 +215,7 @@ def symptoms_create(
     notes: str = Form(""),
     symptom_date: str = Form(...),
     end_date: str = Form(""),
+    client_now: str = Form(""),
 ):
     if not name.strip():
         return RedirectResponse(url="/symptoms/new?error=Symptom+name+is+required", status_code=303)
@@ -215,7 +225,8 @@ def symptoms_create(
         ts_dt = datetime.strptime(symptom_date, "%Y-%m-%dT%H:%M")
     except ValueError:
         return RedirectResponse(url="/symptoms/new?error=Invalid+date+format", status_code=303)
-    if ts_dt > datetime.now():
+    now_ref = _client_now_or_server(client_now)
+    if ts_dt > now_ref:
         return RedirectResponse(url="/symptoms/new?error=Date+cannot+be+in+the+future", status_code=303)
     timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
     end_time = ""
@@ -224,7 +235,7 @@ def symptoms_create(
             end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M")
         except ValueError:
             return RedirectResponse(url="/symptoms/new?error=Invalid+end+date+format", status_code=303)
-        if end_dt > datetime.now():
+        if end_dt > now_ref:
             return RedirectResponse(url="/symptoms/new?error=End+date+cannot+be+in+the+future", status_code=303)
         if end_dt <= ts_dt:
             return RedirectResponse(url="/symptoms/new?error=End+date+must+be+after+start+date", status_code=303)
@@ -354,6 +365,7 @@ def symptoms_edit_post(
     notes: str = Form(""),
     symptom_date: str = Form(...),
     end_date: str = Form(""),
+    client_now: str = Form(""),
 ):
     if not name.strip():
         return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Symptom+name+is+required", status_code=303)
@@ -363,7 +375,8 @@ def symptoms_edit_post(
         ts_dt = datetime.strptime(symptom_date, "%Y-%m-%dT%H:%M")
     except ValueError:
         return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Invalid+date+format", status_code=303)
-    if ts_dt > datetime.now():
+    now_ref = _client_now_or_server(client_now)
+    if ts_dt > now_ref:
         return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Date+cannot+be+in+the+future", status_code=303)
     timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
     end_time = ""
@@ -372,7 +385,7 @@ def symptoms_edit_post(
             end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M")
         except ValueError:
             return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Invalid+end+date+format", status_code=303)
-        if end_dt > datetime.now():
+        if end_dt > now_ref:
             return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=End+date+cannot+be+in+the+future", status_code=303)
         if end_dt <= ts_dt:
             return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=End+date+must+be+after+start+date", status_code=303)

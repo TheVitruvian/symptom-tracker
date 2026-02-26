@@ -30,12 +30,14 @@ def _safe_meds_redirect(redirect_to: str) -> str:
     return val
 
 
-def _parse_valid_scheduled_date(scheduled_date: str):
+def _parse_valid_scheduled_date(scheduled_date: str, today_ref: date = None):
     try:
         d = date.fromisoformat((scheduled_date or "").strip())
     except ValueError:
         return None
-    if d > date.today():
+    if today_ref is None:
+        today_ref = date.today()
+    if d > today_ref:
         return None
     return d
 
@@ -45,6 +47,19 @@ def _parse_created_at(created_at: str):
         return datetime.strptime((created_at or "").strip(), "%Y-%m-%d %H:%M:%S")
     except ValueError:
         return None
+
+
+def _client_now_or_server(client_now: str) -> datetime:
+    if client_now.strip():
+        try:
+            return datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")
+        except ValueError:
+            pass
+    return datetime.now()
+
+
+def _client_today_or_server(client_now: str) -> date:
+    return _client_now_or_server(client_now).date()
 
 
 def _dose_label(dose_num: int, total: int) -> str:
@@ -870,6 +885,7 @@ def api_schedules_create(
     frequency: str = Form(""),
     start_date: str = Form(""),
     notes: str = Form(""),
+    client_now: str = Form(""),
 ):
     if not name.strip():
         return JSONResponse({"ok": False, "error": "Medication name is required"}, status_code=400)
@@ -879,10 +895,11 @@ def api_schedules_create(
         sd = date.fromisoformat(start_date)
     except ValueError:
         return JSONResponse({"ok": False, "error": "Invalid start date"}, status_code=400)
-    if sd > date.today():
+    client_now_dt = _client_now_or_server(client_now)
+    if sd > client_now_dt.date():
         return JSONResponse({"ok": False, "error": "Start date cannot be in the future"}, status_code=400)
     uid = _current_user_id.get()
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    created_at = client_now_dt.strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO medication_schedules (user_id, name, dose, notes, frequency, start_date, created_at)"
@@ -906,6 +923,7 @@ def api_schedules_edit(
     frequency: str = Form(""),
     start_date: str = Form(""),
     notes: str = Form(""),
+    client_now: str = Form(""),
 ):
     if not name.strip():
         return JSONResponse({"ok": False, "error": "Medication name is required"}, status_code=400)
@@ -915,7 +933,7 @@ def api_schedules_edit(
         sd = date.fromisoformat(start_date)
     except ValueError:
         return JSONResponse({"ok": False, "error": "Invalid start date"}, status_code=400)
-    if sd > date.today():
+    if sd > _client_today_or_server(client_now):
         return JSONResponse({"ok": False, "error": "Start date cannot be in the future"}, status_code=400)
     uid = _current_user_id.get()
     with get_db() as conn:
@@ -1006,6 +1024,7 @@ def schedules_create(
     frequency: str = Form(""),
     start_date: str = Form(""),
     notes: str = Form(""),
+    client_now: str = Form(""),
 ):
     if not name.strip():
         return RedirectResponse(url="/medications/schedules/new?error=Medication+name+is+required", status_code=303)
@@ -1015,10 +1034,11 @@ def schedules_create(
         sd = date.fromisoformat(start_date)
     except ValueError:
         return RedirectResponse(url="/medications/schedules/new?error=Invalid+start+date", status_code=303)
-    if sd > date.today():
+    client_now_dt = _client_now_or_server(client_now)
+    if sd > client_now_dt.date():
         return RedirectResponse(url="/medications/schedules/new?error=Start+date+cannot+be+in+the+future", status_code=303)
     uid = _current_user_id.get()
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    created_at = client_now_dt.strftime("%Y-%m-%d %H:%M:%S")
     with get_db() as conn:
         conn.execute(
             "INSERT INTO medication_schedules (user_id, name, dose, notes, frequency, start_date, created_at)"
@@ -1101,6 +1121,7 @@ def schedules_edit_post(
     frequency: str = Form(""),
     start_date: str = Form(""),
     notes: str = Form(""),
+    client_now: str = Form(""),
 ):
     if not name.strip():
         return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Medication+name+is+required", status_code=303)
@@ -1110,7 +1131,7 @@ def schedules_edit_post(
         sd = date.fromisoformat(start_date)
     except ValueError:
         return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Invalid+start+date", status_code=303)
-    if sd > date.today():
+    if sd > _client_today_or_server(client_now):
         return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Start+date+cannot+be+in+the+future", status_code=303)
     uid = _current_user_id.get()
     with get_db() as conn:
@@ -1147,15 +1168,10 @@ def doses_take(
 ):
     uid = _current_user_id.get()
     redirect_to = _safe_meds_redirect(redirect_to)
-    scheduled_day = _parse_valid_scheduled_date(scheduled_date)
+    now_dt = _client_now_or_server(client_now)
+    scheduled_day = _parse_valid_scheduled_date(scheduled_date, now_dt.date())
     if scheduled_day is None or dose_num < 1:
         return RedirectResponse(url=redirect_to, status_code=303)
-    now_dt = datetime.now()
-    if client_now.strip():
-        try:
-            now_dt = datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")
-        except ValueError:
-            pass
     taken_dt = now_dt
     if taken_time.strip():
         try:
@@ -1201,11 +1217,12 @@ def doses_miss(
     schedule_id: int = Form(...),
     scheduled_date: str = Form(...),
     dose_num: int = Form(1),
+    client_now: str = Form(""),
     redirect_to: str = Form("/medications/today"),
 ):
     uid = _current_user_id.get()
     redirect_to = _safe_meds_redirect(redirect_to)
-    scheduled_day = _parse_valid_scheduled_date(scheduled_date)
+    scheduled_day = _parse_valid_scheduled_date(scheduled_date, _client_today_or_server(client_now))
     if scheduled_day is None or dose_num < 1:
         return RedirectResponse(url=redirect_to, status_code=303)
     with get_db() as conn:
@@ -1242,11 +1259,12 @@ def doses_undo(
     schedule_id: int = Form(...),
     scheduled_date: str = Form(...),
     dose_num: int = Form(1),
+    client_now: str = Form(""),
     redirect_to: str = Form("/medications/today"),
 ):
     uid = _current_user_id.get()
     redirect_to = _safe_meds_redirect(redirect_to)
-    scheduled_day = _parse_valid_scheduled_date(scheduled_date)
+    scheduled_day = _parse_valid_scheduled_date(scheduled_date, _client_today_or_server(client_now))
     if scheduled_day is None or dose_num < 1:
         return RedirectResponse(url=redirect_to, status_code=303)
     with get_db() as conn:
