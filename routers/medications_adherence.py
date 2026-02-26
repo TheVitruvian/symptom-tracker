@@ -191,14 +191,20 @@ def medications_today(d: str = "", w_end: str = ""):
     dose_map = {(r["schedule_id"], r["dose_num"]): r for r in dose_rows}
 
     day_tabs = ""
+    day_select_options = ""
     for day_offset in range(6, -1, -1):
         day = window_end - timedelta(days=day_offset)
         is_active = " day-tab-active" if day == selected_day else ""
         tab_label = "Today" if day == today else ("Yesterday" if day == today - timedelta(days=1) else day.strftime("%a"))
         tab_sub = day.strftime("%b %-d")
+        href = f"/medications/today?d={day.isoformat()}&w_end={window_end.isoformat()}"
         day_tabs += (
-            f'<a class="day-tab{is_active}" href="/medications/today?d={day.isoformat()}&w_end={window_end.isoformat()}">'
+            f'<a class="day-tab{is_active}" href="{href}">'
             f'<span>{tab_label}</span><small>{tab_sub}</small></a>'
+        )
+        day_select_options += (
+            f'<option value="{href}"{" selected" if day == selected_day else ""}>'
+            f'{tab_label} ({day.strftime("%b %-d")})</option>'
         )
     prev_week_end = (window_start - timedelta(days=1)).isoformat()
     prev_week_href = f"/medications/today?d={prev_week_end}&w_end={prev_week_end}"
@@ -394,6 +400,7 @@ def medications_today(d: str = "", w_end: str = ""):
     .week-nav-btn {{ text-decoration:none; border:1px solid #d1d5db; color:#374151; background:#fff; border-radius:10px; padding:8px 10px; font-size:12px; font-weight:700; white-space:nowrap; }}
     .week-nav-btn:hover {{ background:#f9fafb; }}
     .day-tabs {{ display:flex; gap:8px; overflow:auto; padding-bottom:2px; margin-bottom:0; }}
+    .day-select-mobile {{ display:none; border:1px solid #d1d5db; border-radius:8px; padding:7px 10px; font-size:13px; font-family:inherit; min-width:170px; background:#fff; color:#111827; }}
     .day-tab {{ min-width:82px; text-decoration:none; border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:8px 10px; color:#374151; display:flex; flex-direction:column; gap:2px; }}
     .day-tab span {{ font-size:13px; font-weight:700; line-height:1.2; }}
     .day-tab small {{ font-size:11px; color:#9ca3af; }}
@@ -451,6 +458,8 @@ def medications_today(d: str = "", w_end: str = ""):
       .kpi-grid {{ grid-template-columns:repeat(2, minmax(120px, 1fr)); }}
     }}
     @media (max-width: 640px) {{
+      .day-tabs {{ display:none; }}
+      .day-select-mobile {{ display:block; flex:1; min-width:0; }}
       .med-row {{ flex-direction:column; }}
       .dose-actions {{ width:100%; min-width:0; }}
       .dose-time-input {{ width:100%; }}
@@ -470,6 +479,9 @@ def medications_today(d: str = "", w_end: str = ""):
       <div class="day-tabs-row">
         <a class="week-nav-btn" href="{prev_week_href}">&larr; Previous week</a>
         <div class="day-tabs">{day_tabs}</div>
+        <select id="day-select-mobile" class="day-select-mobile" aria-label="Select day">
+          {day_select_options}
+        </select>
         {next_week_html}
       </div>
       <div class="kpi-grid">
@@ -587,6 +599,19 @@ def medications_today(d: str = "", w_end: str = ""):
         const href = link.getAttribute("href") || "";
         if (!href) return;
         if (link.classList.contains("day-tab")) setDayTabActive(href);
+        try {{
+          await refreshTodayShell(href, true);
+        }} catch (_) {{
+          window.location.href = href;
+        }}
+      }});
+
+      document.addEventListener("change", async (e) => {{
+        const sel = e.target;
+        if (!(sel instanceof HTMLSelectElement)) return;
+        if (sel.id !== "day-select-mobile") return;
+        const href = sel.value || "";
+        if (!href) return;
         try {{
           await refreshTodayShell(href, true);
         }} catch (_) {{
