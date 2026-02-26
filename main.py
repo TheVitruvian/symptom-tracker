@@ -4,7 +4,14 @@ load_dotenv()
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from config import PUBLIC_PATHS, PHYSICIAN_CTX_COOKIE, _current_user_id, _physician_ctx, UPLOAD_DIR
+from config import (
+    PUBLIC_PATHS,
+    PHYSICIAN_CTX_COOKIE,
+    _current_user_id,
+    _physician_ctx,
+    _set_client_clock,
+    UPLOAD_DIR,
+)
 from db import init_db, get_db
 from security import (
     _get_authenticated_user,
@@ -32,6 +39,7 @@ app = FastAPI()
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    _set_client_clock(request.cookies.get("tz_offset", ""))
     path = request.url.path
     if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         if not _is_same_origin(request):

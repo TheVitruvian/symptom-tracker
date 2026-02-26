@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id
+from config import _current_user_id, _now_local
 from db import get_db
 from ui import PAGE_STYLE, _nav_bar
 
@@ -51,7 +51,7 @@ def _validate_medication_entry(
         ts_dt = datetime.strptime(med_date, "%Y-%m-%dT%H:%M")
     except ValueError:
         return ("Invalid date format", None)
-    now_ref = datetime.now()
+    now_ref = _now_local()
     if client_now.strip():
         try:
             now_ref = datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")

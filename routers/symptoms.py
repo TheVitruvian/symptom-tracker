@@ -4,7 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id
+from config import _current_user_id, _now_local
 from db import get_db
 from ui import PAGE_STYLE, _nav_bar, _sidebar, _severity_color
 
@@ -17,7 +17,7 @@ def _client_now_or_server(client_now: str) -> datetime:
             return datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")
         except ValueError:
             pass
-    return datetime.now()
+    return _now_local()
 
 
 def _fmt_duration(start_str: str, end_str: str) -> str:

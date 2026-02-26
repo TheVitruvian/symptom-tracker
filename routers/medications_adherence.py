@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id
+from config import _current_user_id, _now_local, _today_local
 from db import get_db
 from ui import PAGE_STYLE, _nav_bar
 
@@ -36,7 +36,7 @@ def _parse_valid_scheduled_date(scheduled_date: str, today_ref: date = None):
     except ValueError:
         return None
     if today_ref is None:
-        today_ref = date.today()
+        today_ref = _today_local()
     if d > today_ref:
         return None
     return d
@@ -55,7 +55,7 @@ def _client_now_or_server(client_now: str) -> datetime:
             return datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")
         except ValueError:
             pass
-    return datetime.now()
+    return _now_local()
 
 
 def _client_today_or_server(client_now: str) -> date:
@@ -72,15 +72,16 @@ def _dose_label(dose_num: int, total: int) -> str:
 
 def _adherence_7d(conn, schedule_id: int, user_id: int, start_date_str: str, frequency: str) -> dict:
     dpd = _doses_per_day(frequency)
+    today_local = _today_local()
     if dpd == 0:
         taken = conn.execute(
             "SELECT COUNT(*) FROM medication_doses WHERE schedule_id=? AND user_id=? AND status='taken'"
             " AND scheduled_date >= ?",
-            (schedule_id, user_id, (date.today() - timedelta(days=6)).isoformat()),
+            (schedule_id, user_id, (today_local - timedelta(days=6)).isoformat()),
         ).fetchone()[0]
         return {"expected": None, "taken": taken, "pct": None}
-    window_start = max(date.today() - timedelta(days=6), date.fromisoformat(start_date_str))
-    window_end = date.today()
+    window_start = max(today_local - timedelta(days=6), date.fromisoformat(start_date_str))
+    window_end = today_local
     if window_start > window_end:
         return {"expected": 0, "taken": 0, "pct": None}
     days_in_window = (window_end - window_start).days + 1
@@ -161,7 +162,7 @@ def medications_today(d: str = "", w_end: str = ""):
 </body>
 </html>"""
 
-    today = date.today()
+    today = _today_local()
     try:
         window_end = date.fromisoformat(w_end) if w_end else today
     except ValueError:
@@ -614,7 +615,7 @@ def medications_today(d: str = "", w_end: str = ""):
 @router.get("/medications/schedules", response_class=HTMLResponse)
 def schedules_list():
     from routers.medications import _MED_DATALIST
-    today_str = date.today().isoformat()
+    today_str = _today_local().isoformat()
     freq_options = "".join(
         f'<option value="{k}">{html.escape(v)}</option>' for k, v in FREQ_LABELS.items()
     )
@@ -971,7 +972,7 @@ def api_schedules_deactivate(sched_id: int):
 def schedules_new(error: str = ""):
     from routers.medications import _MED_DATALIST
     error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
-    today_str = date.today().isoformat()
+    today_str = _today_local().isoformat()
     freq_options = "".join(
         f'<option value="{k}">{html.escape(v)}</option>' for k, v in FREQ_LABELS.items()
     )
@@ -1061,7 +1062,7 @@ def schedules_edit_get(sched_id: int, error: str = ""):
         return RedirectResponse(url="/medications/schedules", status_code=303)
     s = dict(row)
     error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
-    today_str = date.today().isoformat()
+    today_str = _today_local().isoformat()
     freq_options = "".join(
         f'<option value="{k}"{" selected" if k == s["frequency"] else ""}>{html.escape(v)}</option>'
         for k, v in FREQ_LABELS.items()

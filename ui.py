@@ -295,32 +295,7 @@ def _nav_bar(active: str = "") -> str:
         'var b=document.getElementById(\'nav-toggle\');'
         'm.classList.toggle(\'open\');'
         'b.innerHTML=m.classList.contains(\'open\')?\'&#10005;\':\'&#9776;\';'
-        '}'
-        'function _clientNowLocal(){'
-        'var n=new Date();var l=new Date(n.getTime()-n.getTimezoneOffset()*60000);return l.toISOString().slice(0,16);'
-        '}'
-        'function _applyClientTimeDefaults(root){'
-        'var ctx=root||document;var nowStr=_clientNowLocal();var dayStr=nowStr.slice(0,10);'
-        'window.__clientNowLocal=nowStr;window.__clientDateLocal=dayStr;'
-        'ctx.querySelectorAll(\'form\').forEach(function(f){'
-        'var c=f.querySelector(\'input[name="client_now"]\');'
-        'if(!c){c=document.createElement(\'input\');c.type=\'hidden\';c.name=\'client_now\';f.appendChild(c);}'
-        'c.value=nowStr;'
-        'if(!f.dataset.clientNowBound){'
-        'f.addEventListener(\'submit\',function(){c.value=_clientNowLocal();});'
-        'f.dataset.clientNowBound=\'1\';'
-        '}'
-        '});'
-        'ctx.querySelectorAll(\'input[type="date"]\').forEach(function(el){'
-        'if(!el.value && !el.dataset.noClientDefault) el.value=dayStr;'
-        'if(!el.max) el.max=dayStr;'
-        '});'
-        'ctx.querySelectorAll(\'input[type="datetime-local"]\').forEach(function(el){'
-        'if(!el.value && !el.dataset.noClientDefault) el.value=nowStr;'
-        'if(!el.max) el.max=nowStr;'
-        '});'
-        '}'
-        'document.addEventListener(\'DOMContentLoaded\',function(){_applyClientTimeDefaults(document);});'
+        'if(window._applyClientTimeDefaults){window._applyClientTimeDefaults(document);}'
         '</script>'
         + _sidebar()
     )
@@ -329,6 +304,60 @@ def _nav_bar(active: str = "") -> str:
 PAGE_STYLE = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    (function () {
+      function clientNowLocal() {
+        var n = new Date();
+        var l = new Date(n.getTime() - n.getTimezoneOffset() * 60000);
+        return l.toISOString().slice(0, 16);
+      }
+      function setCookie(name, value) {
+        document.cookie = name + "=" + encodeURIComponent(value) + "; path=/; max-age=31536000; SameSite=Lax";
+      }
+      window._clientNowLocal = clientNowLocal;
+      window._applyClientTimeDefaults = function (root) {
+        var ctx = root || document;
+        var nowStr = clientNowLocal();
+        var dayStr = nowStr.slice(0, 10);
+        window.__clientNowLocal = nowStr;
+        window.__clientDateLocal = dayStr;
+        ctx.querySelectorAll("form").forEach(function (f) {
+          var c = f.querySelector('input[name="client_now"]');
+          if (!c) {
+            c = document.createElement("input");
+            c.type = "hidden";
+            c.name = "client_now";
+            f.appendChild(c);
+          }
+          c.value = nowStr;
+          if (!f.dataset.clientNowBound) {
+            f.addEventListener("submit", function () { c.value = clientNowLocal(); });
+            f.dataset.clientNowBound = "1";
+          }
+        });
+        ctx.querySelectorAll('input[type="date"]').forEach(function (el) {
+          if (!el.value && !el.dataset.noClientDefault) el.value = dayStr;
+          if (!el.max) el.max = dayStr;
+        });
+        ctx.querySelectorAll('input[type="datetime-local"]').forEach(function (el) {
+          if (!el.value && !el.dataset.noClientDefault) el.value = nowStr;
+          if (!el.max) el.max = nowStr;
+        });
+      };
+      setCookie("tz_offset", String(new Date().getTimezoneOffset()));
+      try {
+        var tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+        if (tz) setCookie("tz", tz);
+      } catch (_) {}
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", function () {
+          window._applyClientTimeDefaults(document);
+        });
+      } else {
+        window._applyClientTimeDefaults(document);
+      }
+    })();
+  </script>
   <style>
     body { font-family: system-ui, sans-serif; background: #f5f5f5; margin: 0; padding: 0; color: #222; }
     .container { max-width: 560px; margin: 0 auto; padding: 24px; }

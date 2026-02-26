@@ -1,6 +1,7 @@
 import os
 import secrets
 from contextvars import ContextVar
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -15,12 +16,37 @@ PHYSICIAN_COOKIE_NAME = "physician_session"
 PHYSICIAN_CTX_COOKIE  = "physician_ctx"
 _current_user_id: ContextVar[int]           = ContextVar("_current_user_id", default=1)
 _physician_ctx:   ContextVar[Optional[str]] = ContextVar("_physician_ctx",   default=None)
+_client_now: ContextVar[Optional[datetime]] = ContextVar("_client_now", default=None)
+_client_tz_offset_min: ContextVar[Optional[int]] = ContextVar("_client_tz_offset_min", default=None)
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 PUBLIC_PATHS = {"/", "/login", "/signup", "/logout", "/forgot-password", "/reset-password"}
 RESET_TOKEN_TTL_SECONDS = 3600  # 1 hour
+
+
+def _set_client_clock(tz_offset_cookie: str):
+    """Set per-request client-local clock derived from JS timezone offset cookie."""
+    offset = None
+    try:
+        offset = int((tz_offset_cookie or "").strip())
+    except ValueError:
+        offset = None
+    if offset is not None and -840 <= offset <= 840:
+        _client_tz_offset_min.set(offset)
+        _client_now.set(datetime.utcnow() - timedelta(minutes=offset))
+        return
+    _client_tz_offset_min.set(None)
+    _client_now.set(datetime.now())
+
+
+def _now_local() -> datetime:
+    return _client_now.get() or datetime.now()
+
+
+def _today_local() -> date:
+    return _now_local().date()
 
 
 def _load_secret_key() -> str:
