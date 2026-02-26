@@ -37,84 +37,9 @@ def _fmt_duration(start_str: str, end_str: str) -> str:
         )
 
 
-@router.get("/symptoms", response_class=HTMLResponse)
+@router.get("/symptoms")
 def symptoms_list():
-    uid = _current_user_id.get()
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT id, name, severity, notes, timestamp, end_time FROM symptoms"
-            " WHERE user_id = ? ORDER BY timestamp DESC",
-            (uid,),
-        ).fetchall()
-
-    # Group by symptom name, preserving order of most recently logged per group
-    groups: dict[str, list] = {}
-    for row in rows:
-        n = row["name"]
-        if n not in groups:
-            groups[n] = []
-        groups[n].append(row)
-
-    if groups:
-        sections = ""
-        for name, entries in groups.items():
-            cards = "".join(
-                f"""
-            <div class="card">
-              <div class="card-header">
-                <div class="badge" style="background:{_severity_color(e['severity'])}">{e['severity']}</div>
-                <div>
-                  <div class="card-name">{html.escape(e['name'])}</div>
-                  <div class="card-ts">{html.escape(_fmt_duration(e['timestamp'], e['end_time']))}</div>
-                </div>
-              </div>
-              {"<p class='card-notes'>" + html.escape(e['notes']) + "</p>" if e['notes'] else ""}
-              <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
-                <a href="/symptoms/{e['id']}/edit" class="btn-edit">Edit</a>
-                <form method="post" action="/symptoms/delete" style="margin:0;">
-                  <input type="hidden" name="id" value="{e['id']}">
-                  <button class="btn-delete" type="submit"
-                    onclick="return confirm('Delete this symptom entry?')">Delete</button>
-                </form>
-              </div>
-            </div>
-            """
-                for e in entries
-            )
-            count = len(entries)
-            label = "entry" if count == 1 else "entries"
-            sections += f"""
-        <div class="sym-group">
-          <div class="sym-group-header">
-            <span class="sym-group-name">{html.escape(name)}</span>
-            <span class="sym-count">{count} {label}</span>
-          </div>
-          {cards}
-        </div>
-        """
-    else:
-        sections = "<p class='empty'>No symptoms logged yet.</p>"
-
-    return f"""<!DOCTYPE html>
-<html>
-<head>{PAGE_STYLE}
-  <style>
-    .sym-group {{ margin-bottom: 28px; }}
-    .sym-group-header {{ display: flex; align-items: baseline; gap: 10px;
-                         border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; margin-top: 20px; }}
-    .sym-group-name {{ font-size: 18px; font-weight: 700; color: #111; }}
-    .sym-count {{ font-size: 13px; color: #9ca3af; }}
-  </style>
-</head>
-<body>
-  {_nav_bar('list')}
-  <div class="container">
-    <h1>Symptom Log</h1>
-    {sections}
-  </div>
-</body>
-</html>
-"""
+    return RedirectResponse(url="/symptoms/chart", status_code=303)
 
 
 @router.get("/symptoms/new", response_class=HTMLResponse)

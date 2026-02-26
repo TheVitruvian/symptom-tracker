@@ -247,7 +247,6 @@ def _nav_bar(active: str = "") -> str:
         '<div class="nav-desktop-links">'
         + dlnk("/symptoms/chart", "Health Report", "chart")
         + dlnk("/symptoms/calendar", "Calendar", "calendar")
-        + dlnk("/symptoms", "Symptoms", "list")
         + dlnk("/medications/today", "Meds", "meds")
         + '</div>'
         '<div class="nav-desktop-actions">'
@@ -272,7 +271,6 @@ def _nav_bar(active: str = "") -> str:
         '<div id="nav-menu">'
         + mlnk("/symptoms/chart", "Health Report", "chart")
         + mlnk("/symptoms/calendar", "Calendar", "calendar")
-        + mlnk("/symptoms", "Symptoms", "list")
         + mlnk("/medications/today", "Meds", "meds")
         + mlnk("/profile", "Profile", "profile")
         + '<div style="display:flex; gap:8px; flex-wrap:wrap; padding:12px 0 4px;">'
@@ -290,17 +288,6 @@ def _nav_bar(active: str = "") -> str:
         '</div>'
         '</div>'
         '</nav>'
-        '<script>window._navToggle=function(){'
-        'var m=document.getElementById(\'nav-menu\');'
-        'var b=document.getElementById(\'nav-toggle\');'
-        'if(!m||!b)return;'
-        'm.classList.toggle(\'open\');'
-        'b.innerHTML=m.classList.contains(\'open\')?\'&#10005;\':\'&#9776;\';'
-        'if(window._applyClientTimeDefaults){window._applyClientTimeDefaults(document);}'
-        '};'
-        'window._navToggleAlias=window._navToggle;'
-        'function _navToggle(e){return window._navToggleAlias&&window._navToggleAlias(e);}'
-        '</script>'
         + _sidebar()
     )
 
@@ -311,19 +298,13 @@ PAGE_STYLE = """
   <script>
     (function () {
       // Backward-compatible global nav toggle for pages that still call _navToggle().
-      var _navToggleImpl = function () {
+      window._navToggle = function () {
         var m = document.getElementById("nav-menu");
         var b = document.getElementById("nav-toggle");
         if (!m || !b) return;
         m.classList.toggle("open");
         b.innerHTML = m.classList.contains("open") ? "&#10005;" : "&#9776;";
       };
-      window._navToggle = _navToggleImpl;
-      window._navToggleAlias = _navToggleImpl;
-      // Ensure bare global name exists for inline onclick="_navToggle()".
-      window._navToggleLegacy = function (e) { return _navToggleImpl(e); };
-      // eslint-disable-next-line no-var
-      var _navToggle = window._navToggleLegacy;
 
       function clientNowLocal() {
         var n = new Date();
