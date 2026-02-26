@@ -129,6 +129,12 @@ def symptoms_chart():
     cursor: pointer;
     font-family: inherit;
   }}
+  .btn-control-active {{
+    border-color: #2563eb;
+    background: #dbeafe;
+    color: #1e3a8a;
+    font-weight: 700;
+  }}
   .btn-print {{
     border: 1px solid #7c3aed;
     background: #7c3aed;
@@ -201,17 +207,17 @@ def symptoms_chart():
       <div class="screen-only controls-row" style="margin-bottom:14px;">
         <div class="control-group">
           <label for="range-from" class="control-label">From</label>
-          <input type="date" id="range-from" onchange="render()" class="control-input">
+          <input type="date" id="range-from" onchange="updateChartRange()" class="control-input">
         </div>
         <div class="control-group">
           <label for="range-to" class="control-label">To</label>
-          <input type="date" id="range-to" onchange="render()" class="control-input">
+          <input type="date" id="range-to" onchange="updateChartRange()" class="control-input">
         </div>
         <div class="preset-row">
-          <button class="btn-control" onclick="setPreset(7)">7d</button>
-          <button class="btn-control" onclick="setPreset(30)">30d</button>
-          <button class="btn-control" onclick="setPreset(90)">90d</button>
-          <button class="btn-control" onclick="setPresetAll()">All</button>
+          <button id="chart-preset-7d" class="btn-control" onclick="setPreset(7)">7d</button>
+          <button id="chart-preset-30d" class="btn-control" onclick="setPreset(30)">30d</button>
+          <button id="chart-preset-90d" class="btn-control" onclick="setPreset(90)">90d</button>
+          <button id="chart-preset-all" class="btn-control" onclick="setPresetAll()">All</button>
         </div>
         <button id="smooth-btn" class="btn-smooth" onclick="toggleSmooth()" data-help="Smooth averages symptom severity over recent days to reduce short-term noise. Turn it off to see raw day-to-day changes.">Smooth</button>
         <button id="bucket-btn" class="btn-bucket" onclick="toggleBucket()" data-help="Daily shows each day separately. Weekly groups data into week buckets (Mon-Sun) so overall trends are easier to read.">Daily</button>
@@ -385,6 +391,7 @@ def symptoms_chart():
     }}
 
     let _allSymp = [], _allMeds = [], _adherenceData = {{}}, _chart = null, _smoothed = true, _timeBucket = "daily";
+    let _chartPreset = "", _patternsPreset = "";
     let _patternsFrom = "", _patternsTo = "", _patternsInitialized = false;
 
     async function init() {{
@@ -413,7 +420,10 @@ def symptoms_chart():
         const from30 = new Date(+latest - 29 * 86400000);
         document.getElementById("range-from").value = from30.toISOString().slice(0, 10);
         document.getElementById("range-to").value = dates[dates.length - 1];
+        _chartPreset = "30d";
+        _patternsPreset = "30d";
       }}
+      syncChartPresetButtons();
 
       render();
       renderAdherencePrint();
@@ -424,6 +434,8 @@ def symptoms_chart():
       const from = new Date(+to - days * 86400000);
       document.getElementById("range-from").value = from.toISOString().slice(0, 10);
       document.getElementById("range-to").value = to.toISOString().slice(0, 10);
+      _chartPreset = `${{days}}d`;
+      syncChartPresetButtons();
       render();
     }}
 
@@ -437,7 +449,30 @@ def symptoms_chart():
         document.getElementById("range-from").value = dates[0];
         document.getElementById("range-to").value = dates[dates.length - 1];
       }}
+      _chartPreset = "all";
+      syncChartPresetButtons();
       render();
+    }}
+
+    function updateChartRange() {{
+      _chartPreset = "";
+      syncChartPresetButtons();
+      render();
+    }}
+
+    function syncChartPresetButtons() {{
+      const map = {{
+        "7d": "chart-preset-7d",
+        "30d": "chart-preset-30d",
+        "90d": "chart-preset-90d",
+        "all": "chart-preset-all",
+      }};
+      Object.entries(map).forEach(([preset, id]) => {{
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        if (_chartPreset === preset) btn.classList.add("btn-control-active");
+        else btn.classList.remove("btn-control-active");
+      }});
     }}
 
     function _dataDateBounds() {{
@@ -457,6 +492,7 @@ def symptoms_chart():
       const from = new Date(+to - (days - 1) * 86400000);
       _patternsFrom = from.toISOString().slice(0, 10);
       _patternsTo = bounds.max;
+      _patternsPreset = `${{days}}d`;
       renderInsights();
     }}
 
@@ -464,6 +500,7 @@ def symptoms_chart():
       const bounds = _dataDateBounds();
       _patternsFrom = bounds.min;
       _patternsTo = bounds.max;
+      _patternsPreset = "all";
       renderInsights();
     }}
 
@@ -476,6 +513,7 @@ def symptoms_chart():
       if (from && to && from > to) [from, to] = [to, from];
       _patternsFrom = from;
       _patternsTo = to;
+      _patternsPreset = "";
       renderInsights();
     }}
 
@@ -628,11 +666,10 @@ def symptoms_chart():
         [...sympCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n)
       );
 
-      let i = 0;
       const datasets = [];
       const symptomMeta = [];
       for (const [name, byDate] of groups) {{
-        const color = PALETTE[i % PALETTE.length]; i++;
+        const color = PALETTE[stableIndex(name, PALETTE.length)];
         let pts = [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, sevs]) => ({{
           x: labelByKey.get(key),
           y: Math.round(sevs.reduce((a, b) => a + b, 0) / sevs.length * 10) / 10,
@@ -864,6 +901,10 @@ def symptoms_chart():
 
       const wrapper = document.getElementById("insights-wrapper");
       wrapper.style.display = "block";
+      const p7Class = _patternsPreset === "7d" ? "btn-control btn-control-active" : "btn-control";
+      const p30Class = _patternsPreset === "30d" ? "btn-control btn-control-active" : "btn-control";
+      const p90Class = _patternsPreset === "90d" ? "btn-control btn-control-active" : "btn-control";
+      const pallClass = _patternsPreset === "all" ? "btn-control btn-control-active" : "btn-control";
       let html = `<h2 class="section-title" style="margin-top:0;">Key Patterns</h2>`;
       html += `<div class="screen-only controls-row" style="margin-bottom:12px;">`
            + `<div class="control-group">`
@@ -877,10 +918,10 @@ def symptoms_chart():
            + ` class="control-input">`
            + `</div>`
            + `<div class="preset-row">`
-           + `<button class="btn-control" onclick="setPatternsPreset(7)">7d</button>`
-           + `<button class="btn-control" onclick="setPatternsPreset(30)">30d</button>`
-           + `<button class="btn-control" onclick="setPatternsPreset(90)">90d</button>`
-           + `<button class="btn-control" onclick="setPatternsAll()">All</button>`
+           + `<button class="${{p7Class}}" onclick="setPatternsPreset(7)">7d</button>`
+           + `<button class="${{p30Class}}" onclick="setPatternsPreset(30)">30d</button>`
+           + `<button class="${{p90Class}}" onclick="setPatternsPreset(90)">90d</button>`
+           + `<button class="${{pallClass}}" onclick="setPatternsAll()">All</button>`
            + `</div>`
            + `</div>`;
       if (!insights.length) {{
