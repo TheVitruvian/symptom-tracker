@@ -309,14 +309,22 @@ def medications_today(d: str = "", w_end: str = ""):
             else:
                 scheduled_pending += 1
                 status_and_actions = (
-                    f'<div class="dose-chip dose-chip-pending">Pending</div>'
+                    f'<div class="primary-actions-row">'
                     f'<form method="post" action="/medications/doses/take" class="dose-action-form" style="margin:0;">'
                     f'<input type="hidden" name="schedule_id" value="{sid}">'
                     f'<input type="hidden" name="scheduled_date" value="{day_str}">'
                     f'<input type="hidden" name="dose_num" value="{dn}">'
                     f'<input type="hidden" name="redirect_to" value="{redirect_to}">'
-                    f'<button type="submit" class="dose-btn dose-btn-primary">Take now</button>'
+                    f'<button type="submit" class="dose-btn dose-btn-muted">Take now</button>'
                     f'</form>'
+                    f'<form method="post" action="/medications/doses/miss" class="dose-action-form" style="margin:0;">'
+                    f'<input type="hidden" name="schedule_id" value="{sid}">'
+                    f'<input type="hidden" name="scheduled_date" value="{day_str}">'
+                    f'<input type="hidden" name="dose_num" value="{dn}">'
+                    f'<input type="hidden" name="redirect_to" value="{redirect_to}">'
+                    f'<button type="submit" class="dose-btn dose-btn-warn">Mark missed</button>'
+                    f'</form>'
+                    f'</div>'
                     f'<details class="dose-more">'
                     f'<summary>More options</summary>'
                     f'<div class="dose-more-actions">'
@@ -327,13 +335,6 @@ def medications_today(d: str = "", w_end: str = ""):
                     f'<input type="hidden" name="redirect_to" value="{redirect_to}">'
                     f'<input type="time" name="taken_time" data-date="{day_str}" class="dose-time dose-time-input">'
                     f'<button type="submit" class="dose-btn dose-btn-secondary">Take with time</button>'
-                    f'</form>'
-                    f'<form method="post" action="/medications/doses/miss" class="dose-action-form" style="margin:0;">'
-                    f'<input type="hidden" name="schedule_id" value="{sid}">'
-                    f'<input type="hidden" name="scheduled_date" value="{day_str}">'
-                    f'<input type="hidden" name="dose_num" value="{dn}">'
-                    f'<input type="hidden" name="redirect_to" value="{redirect_to}">'
-                    f'<button type="submit" class="dose-btn dose-btn-ghost">Mark missed</button>'
                     f'</form>'
                     f'</div>'
                     f'</details>'
@@ -407,8 +408,15 @@ def medications_today(d: str = "", w_end: str = ""):
     .dose-btn-primary:hover {{ background:#166534; }}
     .dose-btn-secondary {{ background:#fff; color:#374151; border:1px solid #d1d5db; }}
     .dose-btn-secondary:hover {{ background:#f9fafb; }}
+    .dose-btn-muted {{ background:#f0fdf4; color:#166534; border:1px solid #bbf7d0; }}
+    .dose-btn-muted:hover {{ background:#dcfce7; }}
+    .dose-btn-warn {{ background:#fef2f2; color:#991b1b; border:1px solid #fecaca; }}
+    .dose-btn-warn:hover {{ background:#fee2e2; }}
     .dose-btn-ghost {{ background:#fff; color:#b91c1c; border:1px solid #fca5a5; }}
     .dose-btn-ghost:hover {{ background:#fff1f2; }}
+    .primary-actions-row {{ display:flex; gap:6px; width:100%; }}
+    .primary-actions-row form {{ flex:1; }}
+    .primary-actions-row .dose-btn {{ white-space:nowrap; font-size:11px; padding:6px 7px; }}
     .status-row {{ display:flex; align-items:center; gap:6px; }}
     .status-row .dose-chip {{ min-height:22px; display:inline-flex; align-items:center; padding:0 8px; }}
     .dose-btn-x {{ width:22px; min-width:22px; min-height:22px; padding:0; border:1px solid #ef4444; background:#ef4444; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; }}
