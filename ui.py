@@ -265,8 +265,8 @@ def _nav_bar(active: str = "") -> str:
         '</form>'
         '</div>'
         # Hamburger (hidden on desktop, shown on mobile via CSS)
-        '<button class="nav-hamburger" id="nav-toggle" aria-label="Open menu"'
-        ' onclick="_navToggle()">&#9776;</button>'
+        '<button type="button" class="nav-hamburger" id="nav-toggle" aria-label="Open menu"'
+        ' onclick="window._navToggle&&window._navToggle(event);return false;">&#9776;</button>'
         '</div>'
         # ── Mobile dropdown ───────────────────────────────────────────────
         '<div id="nav-menu">'
@@ -290,12 +290,16 @@ def _nav_bar(active: str = "") -> str:
         '</div>'
         '</div>'
         '</nav>'
-        '<script>function _navToggle(){'
+        '<script>window._navToggle=function(){'
         'var m=document.getElementById(\'nav-menu\');'
         'var b=document.getElementById(\'nav-toggle\');'
+        'if(!m||!b)return;'
         'm.classList.toggle(\'open\');'
         'b.innerHTML=m.classList.contains(\'open\')?\'&#10005;\':\'&#9776;\';'
         'if(window._applyClientTimeDefaults){window._applyClientTimeDefaults(document);}'
+        '};'
+        'window._navToggleAlias=window._navToggle;'
+        'function _navToggle(e){return window._navToggleAlias&&window._navToggleAlias(e);}'
         '</script>'
         + _sidebar()
     )
@@ -306,6 +310,21 @@ PAGE_STYLE = """
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script>
     (function () {
+      // Backward-compatible global nav toggle for pages that still call _navToggle().
+      var _navToggleImpl = function () {
+        var m = document.getElementById("nav-menu");
+        var b = document.getElementById("nav-toggle");
+        if (!m || !b) return;
+        m.classList.toggle("open");
+        b.innerHTML = m.classList.contains("open") ? "&#10005;" : "&#9776;";
+      };
+      window._navToggle = _navToggleImpl;
+      window._navToggleAlias = _navToggleImpl;
+      // Ensure bare global name exists for inline onclick="_navToggle()".
+      window._navToggleLegacy = function (e) { return _navToggleImpl(e); };
+      // eslint-disable-next-line no-var
+      var _navToggle = window._navToggleLegacy;
+
       function clientNowLocal() {
         var n = new Date();
         var l = new Date(n.getTime() - n.getTimezoneOffset() * 60000);

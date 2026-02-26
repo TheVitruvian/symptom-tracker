@@ -400,7 +400,7 @@ def medications_today(d: str = "", w_end: str = ""):
     .week-nav-btn {{ text-decoration:none; border:1px solid #d1d5db; color:#374151; background:#fff; border-radius:10px; padding:8px 10px; font-size:12px; font-weight:700; white-space:nowrap; }}
     .week-nav-btn:hover {{ background:#f9fafb; }}
     .day-tabs {{ display:flex; gap:8px; overflow:auto; padding-bottom:2px; margin-bottom:0; }}
-    .day-select-mobile {{ display:none; border:1px solid #d1d5db; border-radius:8px; padding:7px 10px; font-size:13px; font-family:inherit; min-width:170px; background:#fff; color:#111827; }}
+    .day-select-mobile {{ display:none; border:1px solid #d1d5db; border-radius:10px; padding:8px 10px; font-size:12px; font-weight:700; font-family:inherit; min-width:170px; background:#fff; color:#374151; }}
     .day-tab {{ min-width:82px; text-decoration:none; border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:8px 10px; color:#374151; display:flex; flex-direction:column; gap:2px; }}
     .day-tab span {{ font-size:13px; font-weight:700; line-height:1.2; }}
     .day-tab small {{ font-size:11px; color:#9ca3af; }}
