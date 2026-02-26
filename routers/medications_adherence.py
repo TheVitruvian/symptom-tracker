@@ -116,7 +116,7 @@ def _meds_subnav(active_key: str) -> str:
 # ── Today's check-off ────────────────────────────────────────────────────────
 
 @router.get("/medications/today", response_class=HTMLResponse)
-def medications_today(d: str = ""):
+def medications_today(d: str = "", w_end: str = ""):
     uid = _current_user_id.get()
     with get_db() as conn:
         schedules = conn.execute(
@@ -141,13 +141,23 @@ def medications_today(d: str = ""):
 
     today = date.today()
     try:
-        selected_day = date.fromisoformat(d) if d else today
+        window_end = date.fromisoformat(w_end) if w_end else today
     except ValueError:
-        selected_day = today
+        window_end = today
+    if window_end > today:
+        window_end = today
+    window_start = window_end - timedelta(days=6)
+
+    try:
+        selected_day = date.fromisoformat(d) if d else window_end
+    except ValueError:
+        selected_day = window_end
     if selected_day > today:
         selected_day = today
+    if selected_day < window_start or selected_day > window_end:
+        selected_day = window_end
     day_str = selected_day.isoformat()
-    redirect_to = f"/medications/today?d={day_str}"
+    redirect_to = f"/medications/today?d={day_str}&w_end={window_end.isoformat()}"
 
     with get_db() as conn:
         dose_rows = conn.execute(
@@ -159,14 +169,22 @@ def medications_today(d: str = ""):
 
     day_tabs = ""
     for day_offset in range(6, -1, -1):
-        day = today - timedelta(days=day_offset)
+        day = window_end - timedelta(days=day_offset)
         is_active = " day-tab-active" if day == selected_day else ""
         tab_label = "Today" if day == today else ("Yesterday" if day == today - timedelta(days=1) else day.strftime("%a"))
         tab_sub = day.strftime("%b %-d")
         day_tabs += (
-            f'<a class="day-tab{is_active}" href="/medications/today?d={day.isoformat()}">'
+            f'<a class="day-tab{is_active}" href="/medications/today?d={day.isoformat()}&w_end={window_end.isoformat()}">'
             f'<span>{tab_label}</span><small>{tab_sub}</small></a>'
         )
+    prev_week_end = (window_start - timedelta(days=1)).isoformat()
+    prev_week_href = f"/medications/today?d={prev_week_end}&w_end={prev_week_end}"
+    next_week_html = ""
+    if window_end < today:
+        next_window_end = min(today, window_end + timedelta(days=7))
+        next_end_str = next_window_end.isoformat()
+        next_week_href = f"/medications/today?d={next_end_str}&w_end={next_end_str}"
+        next_week_html = f'<a class="week-nav-btn" href="{next_week_href}">Next week &rarr;</a>'
 
     slot_rows = {"Daily": "", "Morning": "", "Afternoon": "", "Evening": ""}
     prn_rows = ""
@@ -342,7 +360,10 @@ def medications_today(d: str = ""):
     .today-shell {{ width:min(1320px, calc(100vw - 380px)); }}
     .today-header {{ display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:14px; }}
     .today-label {{ margin:0; font-size:14px; color:#6b7280; font-weight:600; }}
-    .day-tabs {{ display:flex; gap:8px; overflow:auto; padding-bottom:2px; margin-bottom:16px; }}
+    .day-tabs-row {{ display:flex; align-items:center; gap:10px; margin-bottom:16px; }}
+    .week-nav-btn {{ text-decoration:none; border:1px solid #d1d5db; color:#374151; background:#fff; border-radius:10px; padding:8px 10px; font-size:12px; font-weight:700; white-space:nowrap; }}
+    .week-nav-btn:hover {{ background:#f9fafb; }}
+    .day-tabs {{ display:flex; gap:8px; overflow:auto; padding-bottom:2px; margin-bottom:0; }}
     .day-tab {{ min-width:82px; text-decoration:none; border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:8px 10px; color:#374151; display:flex; flex-direction:column; gap:2px; }}
     .day-tab span {{ font-size:13px; font-weight:700; line-height:1.2; }}
     .day-tab small {{ font-size:11px; color:#9ca3af; }}
@@ -408,7 +429,11 @@ def medications_today(d: str = ""):
       <div class="today-header">
         <p class="today-label">{selected_day.strftime("%A, %B %-d, %Y")}</p>
       </div>
-      <div class="day-tabs">{day_tabs}</div>
+      <div class="day-tabs-row">
+        <a class="week-nav-btn" href="{prev_week_href}">&larr; Previous week</a>
+        <div class="day-tabs">{day_tabs}</div>
+        {next_week_html}
+      </div>
       <div class="kpi-grid">
         <div class="kpi-card"><div class="kpi-label">Scheduled</div><div class="kpi-value">{scheduled_expected}</div></div>
         <div class="kpi-card"><div class="kpi-label">Taken</div><div class="kpi-value">{scheduled_taken}</div></div>
@@ -445,20 +470,32 @@ def medications_today(d: str = ""):
         }});
       }}
 
-      async function refreshTodayShell() {{
-        const res = await fetch(window.location.pathname + window.location.search, {{
+      async function refreshTodayShell(url, pushState) {{
+        const targetUrl = url || (window.location.pathname + window.location.search);
+        const res = await fetch(targetUrl, {{
           headers: {{ "X-Requested-With": "fetch" }},
           cache: "no-store",
         }});
         if (!res.ok) throw new Error("refresh failed");
-        const html = await res.text();
+        const htmlText = await res.text();
         const parser = new DOMParser();
-        const doc = parser.parseFromString(html, "text/html");
+        const doc = parser.parseFromString(htmlText, "text/html");
         const nextShell = doc.querySelector(".today-shell");
         const currentShell = document.querySelector(".today-shell");
         if (!nextShell || !currentShell) throw new Error("shell missing");
         currentShell.replaceWith(nextShell);
+        if (pushState) window.history.pushState({{}}, "", targetUrl);
         initDoseTimeInputs(document);
+      }}
+
+      function setDayTabActive(href) {{
+        const target = new URL(href, window.location.origin);
+        const targetDay = target.searchParams.get("d");
+        document.querySelectorAll(".day-tab").forEach((a) => {{
+          const day = new URL(a.href, window.location.origin).searchParams.get("d");
+          if (day && targetDay && day === targetDay) a.classList.add("day-tab-active");
+          else a.classList.remove("day-tab-active");
+        }});
       }}
 
       document.addEventListener("submit", async (e) => {{
@@ -475,11 +512,33 @@ def medications_today(d: str = ""):
             headers: {{ "X-Requested-With": "fetch" }},
           }});
           if (!res.ok) throw new Error("action failed");
-          await refreshTodayShell();
+          await refreshTodayShell("", false);
         }} catch (_) {{
           window.location.href = window.location.pathname + window.location.search;
         }} finally {{
           if (submitBtn) submitBtn.disabled = false;
+        }}
+      }});
+
+      document.addEventListener("click", async (e) => {{
+        const link = e.target.closest("a.day-tab, a.week-nav-btn");
+        if (!link) return;
+        e.preventDefault();
+        const href = link.getAttribute("href") || "";
+        if (!href) return;
+        if (link.classList.contains("day-tab")) setDayTabActive(href);
+        try {{
+          await refreshTodayShell(href, true);
+        }} catch (_) {{
+          window.location.href = href;
+        }}
+      }});
+
+      window.addEventListener("popstate", async () => {{
+        try {{
+          await refreshTodayShell("", false);
+        }} catch (_) {{
+          window.location.reload();
         }}
       }});
 
