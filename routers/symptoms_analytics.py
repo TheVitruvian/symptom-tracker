@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from analysis import _compute_correlations, _pearson
-from config import _current_user_id
+from config import _current_user_id, _from_utc_storage
 from db import get_db
 from ui import PAGE_STYLE, _nav_bar
 
@@ -14,53 +14,65 @@ router = APIRouter()
 @router.get("/api/symptoms/correlations")
 def api_symptoms_correlations(from_date: str = "", to_date: str = ""):
     uid = _current_user_id.get()
-    clauses: list[str] = ["user_id = ?"]
-    params: list = [uid]
-    if from_date:
-        clauses.append("substr(timestamp, 1, 10) >= ?")
-        params.append(from_date)
-    if to_date:
-        clauses.append("substr(timestamp, 1, 10) <= ?")
-        params.append(to_date)
-    where = "WHERE " + " AND ".join(clauses)
+    by_name_day = defaultdict(list)
     with get_db() as conn:
-        rows = conn.execute(f"""
-            SELECT name, substr(timestamp, 1, 10) AS date, AVG(severity) AS avg_severity
-            FROM symptoms {where}
-            GROUP BY name, date
-        """, params).fetchall()
-    names, matrix = _compute_correlations(rows)
+        rows = conn.execute(
+            "SELECT name, severity, timestamp FROM symptoms WHERE user_id = ? AND deleted_at = ''",
+            (uid,),
+        ).fetchall()
+    for r in rows:
+        local_day = _from_utc_storage(r["timestamp"]).date().isoformat()
+        if from_date and local_day < from_date:
+            continue
+        if to_date and local_day > to_date:
+            continue
+        by_name_day[(r["name"], local_day)].append(float(r["severity"]))
+    grouped = [
+        {"name": name, "date": day, "avg_severity": sum(vals) / len(vals)}
+        for (name, day), vals in by_name_day.items()
+    ]
+    names, matrix = _compute_correlations(grouped)
     return JSONResponse({"names": names, "matrix": matrix})
 
 
 @router.get("/api/correlations/med-symptom")
 def api_med_symptom_correlations(from_date: str = "", to_date: str = ""):
     uid = _current_user_id.get()
-    clauses: list[str] = ["user_id = ?"]
-    params: list = [uid]
-    if from_date:
-        clauses.append("substr(timestamp, 1, 10) >= ?")
-        params.append(from_date)
-    if to_date:
-        clauses.append("substr(timestamp, 1, 10) <= ?")
-        params.append(to_date)
-    where = "WHERE " + " AND ".join(clauses)
+    symp_by_name_day = defaultdict(list)
+    med_by_name_day = defaultdict(int)
     with get_db() as conn:
-        symp_rows = conn.execute(f"""
-            SELECT name, substr(timestamp, 1, 10) AS date, AVG(severity) AS avg_severity
-            FROM symptoms {where} GROUP BY name, date
-        """, params).fetchall()
-        med_rows = conn.execute(f"""
-            SELECT name, substr(timestamp, 1, 10) AS date, COUNT(*) AS cnt
-            FROM medications {where} GROUP BY name, date
-        """, params).fetchall()
-    symp_avg = {(r["name"], r["date"]): r["avg_severity"] for r in symp_rows}
+        symp_rows = conn.execute(
+            "SELECT name, severity, timestamp FROM symptoms WHERE user_id = ? AND deleted_at = ''",
+            (uid,),
+        ).fetchall()
+        med_rows = conn.execute(
+            "SELECT name, timestamp FROM medications WHERE user_id = ?",
+            (uid,),
+        ).fetchall()
+    for r in symp_rows:
+        local_day = _from_utc_storage(r["timestamp"]).date().isoformat()
+        if from_date and local_day < from_date:
+            continue
+        if to_date and local_day > to_date:
+            continue
+        symp_by_name_day[(r["name"], local_day)].append(float(r["severity"]))
+    for r in med_rows:
+        local_day = _from_utc_storage(r["timestamp"]).date().isoformat()
+        if from_date and local_day < from_date:
+            continue
+        if to_date and local_day > to_date:
+            continue
+        med_by_name_day[(r["name"], local_day)] += 1
+    symp_avg = {
+        key: sum(vals) / len(vals)
+        for key, vals in symp_by_name_day.items()
+    }
     dates_by_symp = defaultdict(set)
     for name, date in symp_avg:
         dates_by_symp[name].add(date)
-    med_cnt = {(r["name"], r["date"]): r["cnt"] for r in med_rows}
+    med_cnt = dict(med_by_name_day)
     symp_names = sorted(dates_by_symp)
-    med_names = sorted({r["name"] for r in med_rows})
+    med_names = sorted({name for name, _ in med_cnt})
     if not symp_names or not med_names:
         return JSONResponse({"med_names": [], "symp_names": [], "matrix": []})
     matrix = []
@@ -844,7 +856,7 @@ def symptoms_chart():
       }}
 
       const medGroups = new Map();
-      medications.forEach(m => {{
+      medications.filter(m => m.status === "missed").forEach(m => {{
         if (!medGroups.has(m.name)) medGroups.set(m.name, []);
         medGroups.get(m.name).push(m);
       }});
@@ -855,10 +867,12 @@ def symptoms_chart():
       for (const [name, meds] of [...medGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {{
         const color = MED_PALETTE[stableIndex(name, MED_PALETTE.length)];
         const ids = [];
+        const isPrn = _adherenceData[name] && _adherenceData[name].frequency === "prn";
         meds.forEach((m, j) => {{
           const id = `med_${{j}}_${{name}}`;
           ids.push(id);
           const bKey = bucketKey(m.timestamp.slice(0, 10));
+          const hoverNote = (isPrn && (m.notes || "") === "Scheduled dose taken") ? "" : (m.notes || "");
           medAnnotations[id] = {{
             type: "line",
             scaleID: "x",
@@ -867,7 +881,7 @@ def symptoms_chart():
             borderWidth: 1.5,
             borderDash: [5, 4],
             display: false,
-            enter(ctx, event) {{ showMedTooltip(event.native, name, m.dose, m.timestamp.slice(11, 16), m.notes || ""); }},
+            enter(ctx, event) {{ showMedTooltip(event.native, name, m.dose, m.timestamp.slice(11, 16), hoverNote); }},
             leave() {{ hideMedTooltip(); }},
           }};
         }});
@@ -880,7 +894,7 @@ def symptoms_chart():
         options: {{
           responsive: true,
           scales: {{
-            x: {{ type: "category", title: {{ display: true, text: "Date (UTC)" }} }},
+            x: {{ type: "category", title: {{ display: true, text: "Date" }} }},
             y: {{
               min: 1, max: 10,
               ticks: {{ stepSize: 1 }},
@@ -905,6 +919,31 @@ def symptoms_chart():
 
     function buildToggles(chart, symptomMeta, medMeta, topSymptoms) {{
       const bar = document.getElementById("toggle-bar");
+      const from = document.getElementById("range-from").value || "";
+      const to = document.getElementById("range-to").value || "";
+      let rangeLabel = (from || to) ? `${{fmtDate(from || to)}} - ${{fmtDate(to || from)}}` : "current view";
+      if (_chartPreset === "7d") rangeLabel = "last 7 days";
+      else if (_chartPreset === "30d") rangeLabel = "last 30 days";
+      else if (_chartPreset === "90d") rangeLabel = "last 90 days";
+      else if (_chartPreset === "all") rangeLabel = "all time";
+      function medStatsInRange(name) {{
+        const events = _allMeds.filter((m) => {{
+          if (m.name !== name) return false;
+          const d = (m.timestamp || "").slice(0, 10);
+          if (from && d < from) return false;
+          if (to && d > to) return false;
+          return m.status === "taken" || m.status === "missed";
+        }});
+        const taken = events.filter((e) => e.status === "taken").length;
+        const missed = events.filter((e) => e.status === "missed").length;
+        const expected = taken + missed;
+        return {{
+          taken,
+          missed,
+          expected,
+          nonAdherencePct: expected > 0 ? Math.round((missed / expected) * 100) : null,
+        }};
+      }}
       symptomMeta.forEach((info) => {{
         const color = info.color;
         const btn = document.createElement("button");
@@ -944,16 +983,21 @@ def symptoms_chart():
         const adh = _adherenceData[name];
         if (adh) {{
           const badge = document.createElement("span");
-          if (adh.adherence_7d_pct !== null) {{
-            const pct = Math.round(adh.adherence_7d_pct);
-            const bg = pct >= 80 ? "#dcfce7;color:#15803d" : pct >= 50 ? "#fef9c3;color:#92400e" : "#fee2e2;color:#b91c1c";
-            badge.textContent = " " + pct + "%";
-            badge.style.cssText = "font-size:11px;background:" + bg + ";border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;";
-            badge.setAttribute("data-help", `${{name}} adherence over last 7 days: ${{pct}}% (${{adh.taken_7d}}/${{adh.expected_7d}} doses taken)`);
-          }} else {{
-            badge.textContent = " " + adh.taken_7d + "\u00d7";
+          const inRange = medStatsInRange(name);
+          if (adh.frequency === "prn") {{
+            badge.textContent = " " + inRange.taken + "\u00d7";
             badge.style.cssText = "font-size:11px;background:#ede9fe;color:#7c3aed;border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;";
-            badge.setAttribute("data-help", `${{name}} PRN logs over last 7 days: ${{adh.taken_7d}}`);
+            badge.setAttribute("data-help", `${{name}} PRN logs for ${{rangeLabel}}: ${{inRange.taken}}`);
+          }} else if (inRange.nonAdherencePct !== null) {{
+            const pct = inRange.nonAdherencePct;
+            const bg = pct >= 50 ? "#fee2e2;color:#b91c1c" : pct >= 20 ? "#fef9c3;color:#92400e" : "#dcfce7;color:#15803d";
+            badge.textContent = " " + pct + "% missed";
+            badge.style.cssText = "font-size:11px;background:" + bg + ";border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;";
+            badge.setAttribute("data-help", `${{name}} non-adherence for ${{rangeLabel}}: ${{pct}}% (${{inRange.missed}}/${{inRange.expected}} doses missed)`);
+          }} else {{
+            badge.textContent = " --";
+            badge.style.cssText = "font-size:11px;background:#f3f4f6;color:#6b7280;border-radius:10px;padding:1px 6px;margin-left:4px;font-weight:700;";
+            badge.setAttribute("data-help", `${{name}} non-adherence for ${{rangeLabel}}: no completed dose records in this range`);
           }}
           badge.style.cursor = "help";
           badge.tabIndex = 0;
@@ -1266,13 +1310,54 @@ def symptoms_calendar():
       background:#111827; color:#fff; border-radius:8px; padding:8px 10px;
       font-size:12px; line-height:1.45; max-width:260px;
       box-shadow:0 6px 18px rgba(0,0,0,0.24); }
-    #day-detail { display: none; margin-top: 20px; }
-    #day-detail h3 { font-size: 16px; margin: 0 0 12px; color: #111; }
+    #day-entries-modal { display:none; position:fixed; inset:0; z-index:215; background:rgba(17,24,39,0.55);
+      align-items:center; justify-content:center; padding:16px; }
+    #day-entries-modal.open { display:flex; }
+    .day-entries-modal-card { width:min(560px,100%); max-height:min(78vh,760px); overflow:auto; background:#fff;
+      border:1px solid #e5e7eb; border-radius:12px; padding:14px; box-shadow:0 14px 38px rgba(0,0,0,.26); }
+    .day-entries-modal-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+    .day-entries-modal-title { margin:0; font-size:17px; color:#111827; }
+    .day-entries-modal-close { border:1px solid #d1d5db; background:#fff; color:#374151; border-radius:7px; padding:5px 10px;
+      font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
+    .day-entries-modal-close:hover { background:#f9fafb; }
+    .med-dose-row { border:1px solid #eef2f7; border-radius:8px; padding:10px; margin-bottom:8px; background:#fcfcfd; }
+    .med-dose-title { font-size:14px; font-weight:700; color:#111827; line-height:1.3; }
+    .med-dose-meta { font-size:12px; color:#6b7280; margin-top:2px; }
+    .med-dose-status { font-size:11px; font-weight:700; border-radius:999px; padding:3px 8px; display:inline-block; margin-top:6px; }
+    .med-dose-status-taken { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+    .med-dose-status-missed { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
+    .med-dose-status-pending { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+    .med-dose-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; align-items:center; }
+    .med-dose-btn { min-height:30px; border-radius:7px; padding:6px 9px; font-size:12px; cursor:pointer; font-family:inherit; font-weight:600; border:1px solid #d1d5db; background:#fff; color:#374151; }
+    .med-dose-btn:hover { background:#f9fafb; }
+    .med-dose-btn-take { background:#f0fdf4; color:#166534; border-color:#bbf7d0; }
+    .med-dose-btn-take:hover { background:#dcfce7; }
+    .med-dose-btn-miss { background:#fef2f2; color:#991b1b; border-color:#fecaca; }
+    .med-dose-btn-miss:hover { background:#fee2e2; }
+    .med-dose-time {
+      border:1px solid #d1d5db; border-radius:7px; padding:0 9px; font-size:12px; font-family:inherit;
+      height:30px; min-height:30px; width:118px; box-sizing:border-box; line-height:1;
+      background:#fff; color:#374151;
+    }
     .detail-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
       padding: 12px 14px; margin-bottom: 10px; }
     .detail-header { display: flex; align-items: center; gap: 10px; }
     .detail-time { font-size: 12px; color: #6b7280; margin-top: 2px; }
     .detail-notes { font-size: 13px; color: #555; margin: 6px 0 0; }
+    .symp-actions { display:flex; gap:8px; margin-top:8px; }
+    .symp-action-btn { border:1px solid #d1d5db; background:#fff; color:#374151;
+      border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer; font-family:inherit; }
+    .symp-action-btn:hover { background:#f9fafb; }
+    .symp-action-danger { border-color:#fecaca; color:#991b1b; background:#fef2f2; }
+    .symp-action-danger:hover { background:#fee2e2; }
+    #symptom-modal { display:none; position:fixed; inset:0; z-index:220; background:rgba(17,24,39,0.55);
+      align-items:center; justify-content:center; padding:16px; }
+    #symptom-modal.open { display:flex; }
+    .symptom-modal-card { width:min(520px, 100%); background:#fff; border:1px solid #e5e7eb;
+      border-radius:12px; padding:16px; box-shadow:0 14px 38px rgba(0,0,0,.26); }
+    .symptom-modal-title { margin:0 0 12px; font-size:18px; color:#111827; }
+    .symptom-modal-row { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+    .symptom-modal-row button { min-height:34px; }
     @media (max-width: 640px) {
       .cal-grid td { height: 52px; min-height: 52px; padding: 3px 4px; }
       .count { font-size: 10px; margin-left: 1px; }
@@ -1282,7 +1367,10 @@ def symptoms_calendar():
 <body>
 """ + _nav_bar('calendar') + """
   <div class="container" style="max-width:700px;">
-    <h1>Symptom Calendar</h1>
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <h1 style="margin:0;">Symptom Calendar</h1>
+      <button type="button" class="btn-primary" style="font-size:13px;padding:7px 12px;" onclick="openSymptomModal(null)">+ Log Symptom</button>
+    </div>
     <div id="cal-loading">Loading calendar...</div>
     <div id="cal-error" class="alert" style="display:none;">
       Unable to load symptom calendar right now.
@@ -1308,12 +1396,62 @@ def symptoms_calendar():
       </thead>
       <tbody id="cal-body"></tbody>
     </table>
-    <div id="day-detail">
-      <h3 id="detail-title"></h3>
-      <div id="detail-cards"></div>
-    </div>
   </div>
   <div id="dot-tooltip"></div>
+  <div id="day-entries-modal" role="dialog" aria-modal="true" aria-labelledby="day-entries-modal-title">
+    <div class="day-entries-modal-card">
+      <div class="day-entries-modal-head">
+        <h3 id="day-entries-modal-title" class="day-entries-modal-title">Day entries</h3>
+        <button type="button" class="day-entries-modal-close" onclick="closeDayEntriesModal()">Close</button>
+      </div>
+      <div id="day-entries-modal-body"></div>
+    </div>
+  </div>
+  <div id="symptom-modal" role="dialog" aria-modal="true" aria-labelledby="symptom-modal-title">
+    <div class="symptom-modal-card">
+      <h3 id="symptom-modal-title" class="symptom-modal-title">Log Symptom</h3>
+      <div id="symptom-modal-error" class="alert" style="display:none;"></div>
+      <form id="symptom-modal-form">
+        <input type="hidden" id="symptom-id">
+        <div class="form-group">
+          <label for="symptom-name">Symptom name</label>
+          <input type="text" id="symptom-name" required list="symptom-suggestions" autocomplete="off">
+          <datalist id="symptom-suggestions">
+            <option value="Headache"><option value="Migraine"><option value="Nausea">
+            <option value="Fatigue"><option value="Dizziness"><option value="Chest pain">
+            <option value="Shortness of breath"><option value="Fever"><option value="Chills">
+            <option value="Cough"><option value="Sore throat"><option value="Back pain">
+            <option value="Joint pain"><option value="Stomach ache"><option value="Anxiety">
+          </datalist>
+        </div>
+        <div class="form-group">
+          <label for="symptom-severity">Severity</label>
+          <div class="slider-row">
+            <input type="range" id="symptom-severity" min="1" max="10" value="5" required
+              oninput="updateModalSeverity(this.value)">
+            <div class="sev-badge" id="symptom-severity-badge" style="background:#eab308">5</div>
+          </div>
+          <div class="sev-labels"><span>1 — Mild</span><span>10 — Severe</span></div>
+        </div>
+        <div class="form-group">
+          <label for="symptom-notes">Notes</label>
+          <textarea id="symptom-notes" rows="2"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="symptom-start">Start date &amp; time</label>
+          <input type="datetime-local" id="symptom-start" required>
+        </div>
+        <div class="form-group">
+          <label for="symptom-end">End date &amp; time (optional)</label>
+          <input type="datetime-local" id="symptom-end">
+        </div>
+        <div class="symptom-modal-row">
+          <button type="submit" class="btn-primary">Save</button>
+          <button type="button" class="symp-action-btn" onclick="closeSymptomModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
   <script>
     const MONTHS = ["January","February","March","April","May","June",
                     "July","August","September","October","November","December"];
@@ -1395,7 +1533,236 @@ def symptoms_calendar():
       return `<strong>Medications</strong><br>${rows.join("<br>")}${more}`;
     }
 
-    function bindDotTip(el, html) {
+    function closeDayEntriesModal() {
+      const modal = document.getElementById("day-entries-modal");
+      modal.classList.remove("open");
+    }
+
+    function renderSymptomDetailCard(e) {
+      const time = fmtDetailTime(e);
+      const notesHtml = e.notes ? `<p class="detail-notes">${escHtml(e.notes)}</p>` : "";
+      const actionsHtml = `<div class="symp-actions">
+        <button type="button" class="symp-action-btn" onclick="openSymptomModal(${e.id});closeDayEntriesModal();">Edit</button>
+        <button type="button" class="symp-action-btn symp-action-danger" onclick="softDeleteSymptom(${e.id});closeDayEntriesModal();">Delete</button>
+      </div>`;
+      return `
+        <div class="detail-card">
+          <div class="detail-header">
+            <div class="badge" style="background:${sevColor(e.severity)};width:32px;height:32px;font-size:14px;">${e.severity}</div>
+            <div>
+              <div class="card-name">${escHtml(e.name)}</div>
+              <div class="detail-time">${time}</div>
+            </div>
+          </div>
+          ${notesHtml}
+          ${actionsHtml}
+        </div>`;
+    }
+
+    function renderMedicationDetailCard(m) {
+      const time = m.timestamp.slice(11, 16);
+      const doseHtml = m.dose
+        ? `<span style="font-size:12px;color:#7c3aed;margin-top:2px;display:block;">${escHtml(m.dose)}</span>`
+        : "";
+      const notesHtml = m.notes ? `<p class="detail-notes">${escHtml(m.notes)}</p>` : "";
+      return `
+        <div class="detail-card">
+          <div class="detail-header">
+            <div class="badge" style="background:#a855f7;width:32px;height:32px;font-size:11px;flex-shrink:0;">Rx</div>
+            <div>
+              <div class="card-name">${escHtml(m.name)}</div>
+              ${doseHtml}
+              <div class="detail-time">${time}</div>
+            </div>
+          </div>
+          ${notesHtml}
+        </div>`;
+    }
+
+    function openDayEntriesModal(dateStr, kind) {
+      const [year, month, day] = dateStr.split("-");
+      const dateLabel = MONTHS[parseInt(month) - 1] + " " + parseInt(day) + ", " + year;
+      const title = document.getElementById("day-entries-modal-title");
+      const body = document.getElementById("day-entries-modal-body");
+      if (kind === "symptoms") {
+        const entries = byDate[dateStr] || [];
+        title.textContent = "Symptoms - " + dateLabel;
+        body.innerHTML = entries.length
+          ? entries.map(renderSymptomDetailCard).join("")
+          : '<p class="empty">No symptoms logged for this day.</p>';
+      } else {
+        const entries = medsByDate[dateStr] || [];
+        title.textContent = "Medications - " + dateLabel;
+        const loggedHtml = entries.length
+          ? entries.map(renderMedicationDetailCard).join("")
+          : '<p class="empty" style="margin-top:6px;">No medications logged for this day.</p>';
+        body.innerHTML = `
+          <div id="med-day-actions-wrap">
+            <p style="font-size:12px;color:#6b7280;margin:0 0 8px;">Loading scheduled doses...</p>
+          </div>
+          <div style="margin-top:12px;">
+            <h4 style="margin:0 0 8px;font-size:13px;color:#374151;">Logged Medications</h4>
+            ${loggedHtml}
+          </div>`;
+        loadMedicationDayActions(dateStr).catch(() => {
+          const wrap = document.getElementById("med-day-actions-wrap");
+          if (wrap) wrap.innerHTML = '<p class="empty">Could not load dose actions.</p>';
+        });
+      }
+      document.getElementById("day-entries-modal").classList.add("open");
+    }
+
+    function fmtTimeFromTs(ts) {
+      if (!ts) return "";
+      return ts.slice(11, 16);
+    }
+
+    function scheduledDoseRowHtml(r, dateStr) {
+      const doseText = r.dose ? ` <span style="color:#7c3aed;font-weight:600;">${escHtml(r.dose)}</span>` : "";
+      const statusClass = r.status === "taken"
+        ? "med-dose-status med-dose-status-taken"
+        : r.status === "missed"
+          ? "med-dose-status med-dose-status-missed"
+          : "med-dose-status med-dose-status-pending";
+      const statusLabel = r.status === "taken"
+        ? `Taken${r.taken_at ? ` ${fmtTimeFromTs(r.taken_at)}` : ""}`
+        : r.status === "missed"
+          ? "Missed"
+          : "Pending";
+      let actionsHtml = "";
+      if (r.status === "pending") {
+        actionsHtml = `
+          <div class="med-dose-actions">
+            <button type="button" class="med-dose-btn med-dose-btn-take"
+              onclick="takeDoseNow(${r.schedule_id}, ${r.dose_num}, '${dateStr}')">Take now</button>
+            <button type="button" class="med-dose-btn med-dose-btn-miss"
+              onclick="markDoseMissed(${r.schedule_id}, ${r.dose_num}, '${dateStr}')">Mark missed</button>
+            <input type="time" class="med-dose-time" id="med-time-${r.schedule_id}-${r.dose_num}">
+            <button type="button" class="med-dose-btn"
+              onclick="takeDoseWithTime(${r.schedule_id}, ${r.dose_num}, '${dateStr}')">Take with time</button>
+          </div>`;
+      }
+      return `
+        <div class="med-dose-row">
+          <div class="med-dose-title">${escHtml(r.name)}${doseText}</div>
+          <div class="med-dose-meta">${escHtml(r.slot_label || "")}</div>
+          <div class="${statusClass}">${statusLabel}</div>
+          ${actionsHtml}
+        </div>`;
+    }
+
+    function prnDoseRowHtml(r, dateStr) {
+      const doseText = r.dose ? ` <span style="color:#7c3aed;font-weight:600;">${escHtml(r.dose)}</span>` : "";
+      const nextDoseNum = Number(r.logged_count || 0) + 1;
+      return `
+        <div class="med-dose-row">
+          <div class="med-dose-title">${escHtml(r.name)}${doseText}</div>
+          <div class="med-dose-meta">PRN</div>
+          <div class="med-dose-status med-dose-status-pending">Logged: ${r.logged_count || 0}</div>
+          <div class="med-dose-actions">
+            <button type="button" class="med-dose-btn med-dose-btn-take"
+              onclick="takeDoseNow(${r.schedule_id}, ${nextDoseNum}, '${dateStr}')">Take now</button>
+            <input type="time" class="med-dose-time" id="med-time-prn-${r.schedule_id}">
+            <button type="button" class="med-dose-btn"
+              onclick="takeDoseWithTime(${r.schedule_id}, ${nextDoseNum}, '${dateStr}', true)">Take with time</button>
+          </div>
+        </div>`;
+    }
+
+    async function loadMedicationDayActions(dateStr) {
+      const wrap = document.getElementById("med-day-actions-wrap");
+      if (!wrap) return;
+      const resp = await fetch(`/api/medications/day?d=${encodeURIComponent(dateStr)}`, { cache: "no-store" });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Could not load medications");
+      const rows = data.rows || [];
+      if (!rows.length) {
+        wrap.innerHTML = '<p class="empty">No active schedules for this day.</p>';
+        return;
+      }
+      const scheduled = rows.filter(r => r.kind === "scheduled");
+      const prn = rows.filter(r => r.kind === "prn");
+      let html = "";
+      if (scheduled.length) {
+        html += '<h4 style="margin:0 0 8px;font-size:13px;color:#374151;">Scheduled Doses</h4>';
+        html += scheduled.map(r => scheduledDoseRowHtml(r, dateStr)).join("");
+      }
+      if (prn.length) {
+        html += '<h4 style="margin:8px 0 8px;font-size:13px;color:#374151;">PRN Medications</h4>';
+        html += prn.map(r => prnDoseRowHtml(r, dateStr)).join("");
+      }
+      wrap.innerHTML = html;
+      seedDoseTimeInputs();
+    }
+
+    function seedDoseTimeInputs() {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const nowTime = `${hh}:${mm}`;
+      document.querySelectorAll("#med-day-actions-wrap input.med-dose-time").forEach((el) => {
+        if (!el.value) el.value = nowTime;
+      });
+    }
+
+    async function postDoseAction(url, payload, successText) {
+      const csrf = window._getCookie ? window._getCookie("csrf_token") : "";
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": csrf,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Could not update dose");
+      if (window._showToast) window._showToast(successText, "success");
+      await loadMedicationDayActions(payload.scheduled_date);
+      await loadData();
+    }
+
+    async function takeDoseNow(scheduleId, doseNum, dateStr) {
+      try {
+        await postDoseAction("/api/medications/doses/take", {
+          schedule_id: scheduleId,
+          dose_num: doseNum,
+          scheduled_date: dateStr,
+          taken_time: "",
+        }, "Dose saved");
+      } catch (err) {
+        if (window._showToast) window._showToast(err.message || "Could not save dose", "error");
+      }
+    }
+
+    async function markDoseMissed(scheduleId, doseNum, dateStr) {
+      try {
+        await postDoseAction("/api/medications/doses/miss", {
+          schedule_id: scheduleId,
+          dose_num: doseNum,
+          scheduled_date: dateStr,
+        }, "Dose marked missed");
+      } catch (err) {
+        if (window._showToast) window._showToast(err.message || "Could not mark missed", "error");
+      }
+    }
+
+    async function takeDoseWithTime(scheduleId, doseNum, dateStr, isPrn) {
+      const inputId = isPrn ? `med-time-prn-${scheduleId}` : `med-time-${scheduleId}-${doseNum}`;
+      const t = (document.getElementById(inputId)?.value || "").trim();
+      try {
+        await postDoseAction("/api/medications/doses/take", {
+          schedule_id: scheduleId,
+          dose_num: doseNum,
+          scheduled_date: dateStr,
+          taken_time: t,
+        }, "Dose saved");
+      } catch (err) {
+        if (window._showToast) window._showToast(err.message || "Could not save dose", "error");
+      }
+    }
+
+    function bindDotTip(el, html, dateStr, kind) {
       el.classList.add("dot-interactive");
       el.setAttribute("role", "button");
       el.setAttribute("tabindex", "0");
@@ -1408,25 +1775,17 @@ def symptoms_calendar():
       el.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        if (pinnedDot === el) {
-          pinnedDot = null;
-          hideDotTip();
-          return;
-        }
-        pinnedDot = el;
-        showDotTip(ev, html);
+        pinnedDot = null;
+        hideDotTip();
+        openDayEntriesModal(dateStr, kind);
       });
       el.addEventListener("keydown", (ev) => {
         if (ev.key !== "Enter" && ev.key !== " ") return;
         ev.preventDefault();
         ev.stopPropagation();
-        if (pinnedDot === el) {
-          pinnedDot = null;
-          hideDotTip();
-        } else {
-          pinnedDot = el;
-          showDotTip(ev, html);
-        }
+        pinnedDot = null;
+        hideDotTip();
+        openDayEntriesModal(dateStr, kind);
       });
     }
     document.addEventListener("click", (ev) => {
@@ -1436,14 +1795,20 @@ def symptoms_calendar():
       hideDotTip();
     });
     document.addEventListener("keydown", (ev) => {
-      if (ev.key !== "Escape" || !pinnedDot) return;
-      pinnedDot = null;
-      hideDotTip();
+      if (ev.key !== "Escape") return;
+      closeDayEntriesModal();
+      if (pinnedDot) {
+        pinnedDot = null;
+        hideDotTip();
+      }
     });
 
     let byDate = {};     // "YYYY-MM-DD" -> [{id,name,severity,notes,timestamp,end_time}]
     let medsByDate = {}; // "YYYY-MM-DD" -> [{id,name,dose,notes,timestamp}]
+    let symptomById = {}; // id -> symptom row
     let curYear, curMonth, selectedDate = null;
+    let calendarInitialized = false;
+    let autoOpenHandled = false;
 
     function expandSymptomDatesCal(s) {
       const start = s.timestamp.slice(0, 10);
@@ -1480,7 +1845,6 @@ def symptoms_calendar():
       loading.style.display = "block";
       error.style.display = "none";
       table.style.display = "none";
-      document.getElementById("day-detail").style.display = "none";
       pinnedDot = null;
       hideDotTip();
       try {
@@ -1488,7 +1852,9 @@ def symptoms_calendar():
         if (!sympResp.ok || !medResp.ok) throw new Error("Calendar API request failed");
         const [sympData, medData] = await Promise.all([sympResp.json(), medResp.json()]);
         byDate = {};
+        symptomById = {};
         for (const s of sympData.symptoms) {
+          symptomById[String(s.id)] = s;
           for (const date of expandSymptomDatesCal(s)) {
             if (!byDate[date]) byDate[date] = [];
             byDate[date].push(s);
@@ -1500,15 +1866,35 @@ def symptoms_calendar():
           if (!medsByDate[date]) medsByDate[date] = [];
           medsByDate[date].push(m);
         }
-        const now = new Date();
-        curYear = now.getFullYear();
-        curMonth = now.getMonth();  // 0-indexed
-        selectedDate = null;
+        if (!calendarInitialized) {
+          const now = new Date();
+          curYear = now.getFullYear();
+          curMonth = now.getMonth();  // 0-indexed
+          selectedDate = null;
+        }
         table.style.display = "";
         renderCalendar();
-        // Default selection: today
-        const todayStr = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
-        onDayClick(todayStr);
+        if (!calendarInitialized) {
+          const now = new Date();
+          const todayStr = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+          onDayClick(todayStr);
+          calendarInitialized = true;
+        } else if (selectedDate) {
+          const keep = selectedDate;
+          selectedDate = null;
+          onDayClick(keep);
+        }
+        if (!autoOpenHandled) {
+          autoOpenHandled = true;
+          const qs = new URLSearchParams(window.location.search || "");
+          if (qs.get("open_symptom_modal") === "1") {
+            openSymptomModal(null);
+            qs.delete("open_symptom_modal");
+            const next = qs.toString();
+            const cleanUrl = window.location.pathname + (next ? "?" + next : "");
+            window.history.replaceState({}, "", cleanUrl);
+          }
+        }
       } catch (err) {
         console.error(err);
         error.style.display = "block";
@@ -1524,7 +1910,6 @@ def symptoms_calendar():
       if (curMonth > 11) { curMonth = 0; curYear++; }
       if (curMonth < 0)  { curMonth = 11; curYear--; }
       selectedDate = null;
-      document.getElementById("day-detail").style.display = "none";
       renderCalendar();
     }
 
@@ -1595,8 +1980,8 @@ def symptoms_calendar():
             }
             td.innerHTML = inner;
             const dots = td.querySelectorAll(".dot");
-            if (hasEntries && dots[0]) bindDotTip(dots[0], symptomDotTip(entries));
-            if (hasMedEntries && dots[hasEntries ? 1 : 0]) bindDotTip(dots[hasEntries ? 1 : 0], medsDotTip(medEntries));
+            if (hasEntries && dots[0]) bindDotTip(dots[0], symptomDotTip(entries), dateStr, "symptoms");
+            if (hasMedEntries && dots[hasEntries ? 1 : 0]) bindDotTip(dots[hasEntries ? 1 : 0], medsDotTip(medEntries), dateStr, "medications");
             dayCount++;
           }
           tr.appendChild(td);
@@ -1608,71 +1993,161 @@ def symptoms_calendar():
     function onDayClick(dateStr) {
       pinnedDot = null;
       hideDotTip();
-      const detail = document.getElementById("day-detail");
       if (selectedDate === dateStr) {
-        // Toggle off
         selectedDate = null;
-        detail.style.display = "none";
         renderCalendar();
         return;
       }
       selectedDate = dateStr;
       renderCalendar();
-
-      const entries = byDate[dateStr] || [];
-      const [year, month, day] = dateStr.split("-");
-      document.getElementById("detail-title").textContent =
-        MONTHS[parseInt(month) - 1] + " " + parseInt(day) + ", " + year;
-
-      const cards = document.getElementById("detail-cards");
-      cards.innerHTML = "";
-      const medEntries = medsByDate[dateStr] || [];
-      for (const m of medEntries) {
-        const time = m.timestamp.slice(11, 16);
-        const doseHtml = m.dose
-          ? `<span style="font-size:12px;color:#7c3aed;margin-top:2px;display:block;">${escHtml(m.dose)}</span>`
-          : "";
-        const notesHtml = m.notes
-          ? `<p class="detail-notes">${escHtml(m.notes)}</p>`
-          : "";
-        const div = document.createElement("div");
-        div.className = "detail-card";
-        div.innerHTML = `
-          <div class="detail-header">
-            <div class="badge" style="background:#a855f7;width:32px;height:32px;font-size:11px;flex-shrink:0;">Rx</div>
-            <div>
-              <div class="card-name">${escHtml(m.name)}</div>
-              ${doseHtml}
-              <div class="detail-time">${time}</div>
-            </div>
-          </div>
-          ${notesHtml}
-        `;
-        cards.appendChild(div);
-      }
-      for (const e of entries) {
-        const time = fmtDetailTime(e);
-        const notesHtml = e.notes
-          ? `<p class="detail-notes">${escHtml(e.notes)}</p>`
-          : "";
-        const div = document.createElement("div");
-        div.className = "detail-card";
-        div.innerHTML = `
-          <div class="detail-header">
-            <div class="badge" style="background:${sevColor(e.severity)};width:32px;height:32px;font-size:14px;">${e.severity}</div>
-            <div>
-              <div class="card-name">${escHtml(e.name)}</div>
-              <div class="detail-time">${time}</div>
-            </div>
-          </div>
-          ${notesHtml}
-        `;
-        cards.appendChild(div);
-      }
-      detail.style.display = "block";
     }
 
+    function localNowDateTimeInput() {
+      const now = new Date();
+      const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+      return local.toISOString().slice(0, 16);
+    }
+
+    function modalSeverityColor(v) {
+      const n = Number(v || 0);
+      if (n <= 3) return "#22c55e";
+      if (n <= 6) return "#eab308";
+      if (n <= 8) return "#f97316";
+      return "#ef4444";
+    }
+
+    function updateModalSeverity(v) {
+      const badge = document.getElementById("symptom-severity-badge");
+      if (!badge) return;
+      const color = modalSeverityColor(v);
+      badge.textContent = String(v);
+      badge.style.background = color;
+      const slider = document.getElementById("symptom-severity");
+      if (slider) slider.style.accentColor = color;
+    }
+
+    function openSymptomModal(symptomId) {
+      const modal = document.getElementById("symptom-modal");
+      const title = document.getElementById("symptom-modal-title");
+      const idEl = document.getElementById("symptom-id");
+      const errEl = document.getElementById("symptom-modal-error");
+      errEl.style.display = "none";
+      errEl.textContent = "";
+      if (symptomId === null || symptomId === undefined) {
+        title.textContent = "Log Symptom";
+        idEl.value = "";
+        document.getElementById("symptom-name").value = "";
+        document.getElementById("symptom-severity").value = "5";
+        updateModalSeverity(5);
+        document.getElementById("symptom-notes").value = "";
+        const selected = selectedDate || localNowDateTimeInput().slice(0, 10);
+        document.getElementById("symptom-start").value = selected + "T" + localNowDateTimeInput().slice(11, 16);
+        document.getElementById("symptom-end").value = "";
+      } else {
+        const s = symptomById[String(symptomId)];
+        if (!s) return;
+        title.textContent = "Edit Symptom";
+        idEl.value = String(s.id);
+        document.getElementById("symptom-name").value = s.name || "";
+        document.getElementById("symptom-severity").value = String(s.severity || 5);
+        updateModalSeverity(s.severity || 5);
+        document.getElementById("symptom-notes").value = s.notes || "";
+        document.getElementById("symptom-start").value = (s.timestamp || "").replace(" ", "T").slice(0, 16);
+        document.getElementById("symptom-end").value = s.end_time ? s.end_time.replace(" ", "T").slice(0, 16) : "";
+      }
+      modal.classList.add("open");
+      document.getElementById("symptom-name").focus();
+    }
+
+    function closeSymptomModal() {
+      document.getElementById("symptom-modal").classList.remove("open");
+    }
+
+    async function saveSymptomForm(ev) {
+      ev.preventDefault();
+      const id = document.getElementById("symptom-id").value.trim();
+      const payload = {
+        name: document.getElementById("symptom-name").value,
+        severity: Number(document.getElementById("symptom-severity").value || 0),
+        notes: document.getElementById("symptom-notes").value,
+        symptom_date: document.getElementById("symptom-start").value,
+        end_date: document.getElementById("symptom-end").value || "",
+      };
+      const url = id ? `/api/symptoms/${id}/edit` : "/api/symptoms";
+      const csrf = window._getCookie ? window._getCookie("csrf_token") : "";
+      const errEl = document.getElementById("symptom-modal-error");
+      errEl.style.display = "none";
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrf,
+          },
+          body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+          throw new Error(data.error || "Could not save symptom");
+        }
+        closeSymptomModal();
+        if (window._showToast) window._showToast("Symptom saved", "success");
+        await loadData();
+      } catch (err) {
+        errEl.textContent = err.message || "Could not save symptom";
+        errEl.style.display = "";
+        if (window._showToast) window._showToast("Could not save symptom", "error");
+      }
+    }
+
+    async function restoreSymptom(id) {
+      const csrf = window._getCookie ? window._getCookie("csrf_token") : "";
+      const resp = await fetch(`/api/symptoms/${id}/restore`, {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrf },
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) throw new Error(data.error || "Undo failed");
+      if (window._showToast) window._showToast("Symptom restored", "info");
+      await loadData();
+    }
+
+    async function softDeleteSymptom(id) {
+      const csrf = window._getCookie ? window._getCookie("csrf_token") : "";
+      try {
+        const resp = await fetch(`/api/symptoms/${id}/soft-delete`, {
+          method: "POST",
+          headers: { "X-CSRF-Token": csrf },
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || "Delete failed");
+        const undoSecs = Number(data.undo_window_seconds || 20);
+        await loadData();
+        if (window._showToast) {
+          window._showToast("Symptom deleted. Undo within {s}s", "info", {
+            actionText: "Undo",
+            countdownSeconds: undoSecs,
+            durationMs: Math.max(undoSecs * 1000, 3000),
+            onAction: () => { restoreSymptom(id).catch(() => {
+              if (window._showToast) window._showToast("Undo window expired", "error");
+            }); },
+          });
+        }
+      } catch (err) {
+        if (window._showToast) window._showToast(err.message || "Could not delete symptom", "error");
+      }
+    }
+
+    document.getElementById("symptom-modal-form").addEventListener("submit", saveSymptomForm);
+    document.getElementById("symptom-modal").addEventListener("click", (ev) => {
+      if (ev.target.id === "symptom-modal") closeSymptomModal();
+    });
+    document.getElementById("day-entries-modal").addEventListener("click", (ev) => {
+      if (ev.target.id === "day-entries-modal") closeDayEntriesModal();
+    });
+
     loadData();
+    updateModalSeverity(5);
   </script>
 </body>
 </html>

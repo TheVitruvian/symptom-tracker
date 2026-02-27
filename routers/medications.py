@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id, _now_local
+from config import _current_user_id, _from_utc_storage, _now_local
 from db import get_db
 from ui import PAGE_STYLE, _nav_bar
 
@@ -37,7 +37,7 @@ def _entry_error_url(base_path: str, message: str) -> str:
 
 
 def _validate_medication_entry(
-    name: str, dose: str, notes: str, med_date: str, client_now: str = ""
+    name: str, dose: str, notes: str, med_date: str
 ) -> Tuple[Optional[str], Optional[datetime]]:
     if not name.strip():
         return ("Medication name is required", None)
@@ -52,11 +52,6 @@ def _validate_medication_entry(
     except ValueError:
         return ("Invalid date format", None)
     now_ref = _now_local()
-    if client_now.strip():
-        try:
-            now_ref = datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")
-        except ValueError:
-            pass
     if ts_dt > now_ref:
         return ("Date cannot be in the future", None)
     return (None, ts_dt)
@@ -66,13 +61,17 @@ def _validate_medication_entry(
 def api_medications():
     uid = _current_user_id.get()
     with get_db() as conn:
-        adhoc = conn.execute(
-            "SELECT id, name, dose, notes, timestamp FROM medications"
-            " WHERE user_id = ? ORDER BY timestamp ASC",
+        taken = conn.execute(
+            "SELECT 'dose_taken_' || md.id AS id, ms.name, ms.dose,"
+            " 'Scheduled dose taken' AS notes, 'taken' AS status, md.taken_at AS timestamp"
+            " FROM medication_doses md"
+            " JOIN medication_schedules ms ON ms.id = md.schedule_id AND ms.user_id = md.user_id"
+            " WHERE md.user_id=? AND md.status='taken' AND md.taken_at != ''"
+            " ORDER BY md.taken_at ASC",
             (uid,),
         ).fetchall()
         missed = conn.execute(
-            "SELECT md.id, ms.name, ms.dose, 'Medication missed' AS notes,"
+            "SELECT 'dose_missed_' || md.id AS id, ms.name, ms.dose, 'Medication missed' AS notes, 'missed' AS status,"
             " md.scheduled_date || ' 00:00:00' AS timestamp"
             " FROM medication_doses md"
             " JOIN medication_schedules ms ON ms.id = md.schedule_id AND ms.user_id = md.user_id"
@@ -80,10 +79,12 @@ def api_medications():
             " ORDER BY md.scheduled_date ASC",
             (uid,),
         ).fetchall()
-    result = sorted(
-        [dict(r) for r in adhoc] + [dict(r) for r in missed],
-        key=lambda r: r["timestamp"],
-    )
+    taken_local = []
+    for r in taken:
+        item = dict(r)
+        item["timestamp"] = _from_utc_storage(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+        taken_local.append(item)
+    result = sorted(taken_local + [dict(r) for r in missed], key=lambda r: r["timestamp"])
     return JSONResponse({"medications": result})
 
 
@@ -109,11 +110,25 @@ def _meds_subnav_log() -> str:
 def medications_list():
     uid = _current_user_id.get()
     with get_db() as conn:
-        rows = conn.execute(
-            "SELECT id, name, dose, notes, timestamp FROM medications"
-            " WHERE user_id = ? ORDER BY timestamp DESC",
+        taken_rows = conn.execute(
+            "SELECT 'dose_taken_' || md.id AS id, ms.name, ms.dose, 'Taken' AS status,"
+            " md.taken_at AS timestamp, '' AS notes"
+            " FROM medication_doses md"
+            " JOIN medication_schedules ms ON ms.id = md.schedule_id AND ms.user_id = md.user_id"
+            " WHERE md.user_id = ? AND md.status='taken' AND md.taken_at != ''"
+            " ORDER BY md.taken_at DESC",
             (uid,),
         ).fetchall()
+        missed_rows = conn.execute(
+            "SELECT 'dose_missed_' || md.id AS id, ms.name, ms.dose, 'Missed' AS status,"
+            " md.scheduled_date || ' 00:00:00' AS timestamp, 'Scheduled dose missed' AS notes"
+            " FROM medication_doses md"
+            " JOIN medication_schedules ms ON ms.id = md.schedule_id AND ms.user_id = md.user_id"
+            " WHERE md.user_id = ? AND md.status='missed'"
+            " ORDER BY md.scheduled_date DESC",
+            (uid,),
+        ).fetchall()
+        rows = sorted([dict(r) for r in taken_rows] + [dict(r) for r in missed_rows], key=lambda r: r["timestamp"], reverse=True)
         # Schedules summary for top section
         schedules = conn.execute(
             "SELECT id, name, dose, frequency, start_date FROM medication_schedules"
@@ -155,10 +170,24 @@ def medications_list():
         if n not in groups:
             groups[n] = []
         groups[n].append(row)
+    total_entries = len(rows)
+    unique_meds = len(groups)
+    last_logged = "—"
+    if rows:
+        if rows[0]["status"] == "Taken":
+            last_logged = _from_utc_storage(rows[0]["timestamp"]).strftime("%b %-d, %Y %H:%M")
+        else:
+            last_logged = rows[0]["timestamp"]
 
     if groups:
         sections = ""
         for name, entries in groups.items():
+            local_entries = []
+            for e in entries:
+                item = dict(e)
+                if item["status"] == "Taken":
+                    item["timestamp"] = _from_utc_storage(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+                local_entries.append(item)
             cards = "".join(
                 f"""
             <div class="card med-card">
@@ -170,29 +199,24 @@ def medications_list():
                   <div class="card-ts med-ts">{html.escape(e['timestamp'])}</div>
                 </div>
               </div>
+              <div class="med-status med-status-{"taken" if e["status"] == "Taken" else "missed"}">{html.escape(e["status"])}</div>
               {"<p class='card-notes med-notes'>" + html.escape(e['notes']) + "</p>" if e['notes'] else ""}
-              <div class="med-actions">
-                <a href="/medications/{e['id']}/edit" class="btn-edit">Edit</a>
-                <form method="post" action="/medications/delete" style="margin:0;">
-                  <input type="hidden" name="id" value="{e['id']}">
-                  <button class="btn-delete" type="submit"
-                    onclick="return confirm('Delete this medication entry?')">Delete</button>
-                </form>
-              </div>
             </div>
             """
-                for e in entries
+                for e in local_entries
             )
-            count = len(entries)
+            count = len(local_entries)
             label = "entry" if count == 1 else "entries"
             sections += f"""
-        <div class="med-group">
-          <div class="med-group-header">
+        <details class="med-group">
+          <summary class="med-group-header">
             <span class="med-group-name">{html.escape(name)}</span>
             <span class="med-count">{count} {label}</span>
+          </summary>
+          <div class="med-group-body">
+            {cards}
           </div>
-          {cards}
-        </div>
+        </details>
         """
     else:
         sections = "<p class='empty'>No medications logged yet.</p>"
@@ -201,30 +225,41 @@ def medications_list():
 <html>
 <head>{PAGE_STYLE}
   <style>
-    .med-group {{ margin-bottom: 34px; }}
-    .med-group-header {{ display: flex; align-items: center; gap: 10px;
-                         border-bottom: 2px solid #dbe1ea; padding-bottom: 10px; margin-top: 22px; }}
-    .med-group-name {{ font-size: 20px; font-weight: 750; color: #111827; line-height: 1.2; }}
-    .med-count {{ font-size: 14px; color: #374151; background: #eef2ff; border: 1px solid #e0e7ff;
-                  border-radius: 999px; padding: 2px 10px; }}
-    .med-card {{ border-color: #dbe1ea; padding: 18px; }}
-    .med-badge {{ background: #7c3aed; font-size: 13px; width: 40px; height: 40px; }}
-    .med-name {{ font-size: 18px; font-weight: 700; color: #111827; }}
-    .med-dose {{ font-size: 14px; color: #5b21b6; margin-top: 4px; font-weight: 600; line-height: 1.35; }}
-    .med-ts {{ font-size: 13px; color: #4b5563; margin-top: 5px; }}
-    .med-notes {{ font-size: 15px; color: #1f2937; line-height: 1.55; }}
-    .med-actions {{ display: flex; gap: 10px; align-items: center; margin-top: 14px; }}
-    .med-actions .btn-edit, .med-actions .btn-delete {{ font-size: 14px; padding: 6px 12px; }}
-    .med-cta {{ background: #7c3aed; margin-bottom: 18px; padding: 10px 18px; font-size: 15px; }}
-    .med-cta:hover {{ background: #6d28d9; }}
+    .med-shell {{ display:flex; flex-direction:column; gap:14px; }}
+    .med-summary {{ border:1px solid #e5e7eb; border-radius:10px; background:#fff; padding:10px 12px;
+                    display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }}
+    .med-summary-item {{ border:1px solid #eef2f7; border-radius:8px; padding:8px 10px; background:#fcfcfd; }}
+    .med-summary-label {{ font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:.04em; font-weight:700; }}
+    .med-summary-value {{ margin-top:2px; font-size:16px; color:#111827; font-weight:750; line-height:1.2; }}
+    .med-controls {{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }}
+    .med-btn-primary {{ background:#7c3aed; color:#fff; text-decoration:none; border-radius:8px; padding:8px 14px; font-size:13px; font-weight:700; }}
+    .med-btn-primary:hover {{ background:#6d28d9; }}
+    .med-btn-secondary {{ border:1px solid #d1d5db; color:#374151; text-decoration:none; border-radius:8px; padding:8px 12px; font-size:13px; font-weight:600; background:#fff; }}
+    .med-btn-secondary:hover {{ background:#f9fafb; }}
+    .med-group {{ margin-bottom: 10px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; }}
+    .med-group-header {{ display:flex; align-items:center; justify-content:space-between; gap:10px;
+                         padding:10px 12px; cursor:pointer; list-style:none; user-select:none; }}
+    .med-group-header::-webkit-details-marker {{ display:none; }}
+    .med-group-body {{ padding:0 10px 8px; border-top:1px solid #eef2f7; }}
+    .med-group-name {{ font-size: 18px; font-weight: 750; color: #111827; line-height: 1.2; }}
+    .med-count {{ font-size: 12px; color: #374151; background: #eef2ff; border: 1px solid #e0e7ff;
+                  border-radius: 999px; padding: 2px 9px; font-weight:700; }}
+    .med-card {{ border-color: #e5e7eb; padding: 14px; margin:8px 0; border-radius:10px; }}
+    .med-badge {{ background: #7c3aed; font-size: 12px; width: 34px; height: 34px; }}
+    .med-name {{ font-size: 16px; font-weight: 700; color: #111827; }}
+    .med-dose {{ font-size: 13px; color: #5b21b6; margin-top: 2px; font-weight: 600; line-height: 1.35; }}
+    .med-ts {{ font-size: 12px; color: #6b7280; margin-top: 4px; }}
+    .med-notes {{ font-size: 13px; color: #1f2937; line-height: 1.5; margin:10px 0 0; }}
+    .med-status {{ margin-top:8px; display:inline-flex; align-items:center; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:700; }}
+    .med-status-taken {{ background:#dcfce7; color:#166534; border:1px solid #86efac; }}
+    .med-status-missed {{ background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }}
+    .sched-summary {{ margin:0; padding:12px 14px; border-radius:10px; }}
     @media (max-width: 640px) {{
-      .med-group-name {{ font-size: 18px; }}
-      .med-count {{ font-size: 13px; }}
-      .med-card {{ padding: 16px; }}
-      .med-badge {{ width: 36px; height: 36px; font-size: 12px; }}
-      .med-dose, .med-ts {{ font-size: 13px; }}
-      .med-notes {{ font-size: 14px; }}
-      .med-actions .btn-edit, .med-actions .btn-delete {{ min-height: 36px; }}
+      .med-summary {{ grid-template-columns:1fr; }}
+      .med-controls a {{ flex:1; text-align:center; }}
+      .med-card {{ padding: 12px; }}
+      .med-actions {{ width:100%; }}
+      .med-actions .btn-edit, .med-actions .btn-delete {{ flex:1; text-align:center; }}
     }}
   </style>
 </head>
@@ -233,9 +268,28 @@ def medications_list():
   <div class="container">
     <h1>Medications</h1>
     {_meds_subnav_log()}
-    {schedules_section}
-    <a href="/medications/new" class="btn-log med-cta">+ Log Medication</a>
-    {sections}
+    <div class="med-shell">
+      <div class="med-summary">
+        <div class="med-summary-item">
+          <div class="med-summary-label">Logged Entries</div>
+          <div class="med-summary-value">{total_entries}</div>
+        </div>
+        <div class="med-summary-item">
+          <div class="med-summary-label">Medications</div>
+          <div class="med-summary-value">{unique_meds}</div>
+        </div>
+        <div class="med-summary-item">
+          <div class="med-summary-label">Last Logged</div>
+          <div class="med-summary-value" style="font-size:13px;font-weight:700;">{html.escape(last_logged)}</div>
+        </div>
+      </div>
+      <div class="med-controls">
+        <a href="/medications/today" class="med-btn-primary">Open Today's Doses</a>
+        <a href="/medications/schedules" class="med-btn-secondary">Manage schedules</a>
+      </div>
+      {schedules_section.replace('class="card"', 'class="card sched-summary"') if schedules_section else ""}
+      {sections}
+    </div>
   </div>
 </body>
 </html>
@@ -244,57 +298,10 @@ def medications_list():
 
 @router.get("/medications/new", response_class=HTMLResponse)
 def medications_new(error: str = ""):
-    error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
-    return f"""<!DOCTYPE html>
-<html>
-<head>{PAGE_STYLE}</head>
-<body>
-  {_nav_bar('meds')}
-  <div class="container">
-    <h1>Log a Medication</h1>
-    {error_html}
-    <div class="card">
-      <form method="post" action="/medications">
-        <input type="hidden" id="client_now" name="client_now" value="">
-        <div class="form-group">
-          <label for="med_name">Medication name <span style="color:#ef4444">*</span></label>
-          <input type="text" id="med_name" name="name"
-            placeholder="e.g. Ibuprofen (Advil/Motrin)" required
-            list="med-suggestions" autocomplete="off" maxlength="{MAX_MED_NAME_LEN}">
-          <datalist id="med-suggestions">{_MED_DATALIST}</datalist>
-        </div>
-        <div class="form-group">
-          <label for="dose">Dose <span style="color:#aaa;font-weight:400">(optional)</span></label>
-          <input type="text" id="dose" name="dose" placeholder="e.g. 400mg, 10mg twice daily" maxlength="{MAX_DOSE_LEN}">
-        </div>
-        <div class="form-group">
-          <label for="notes">Notes <span style="color:#aaa;font-weight:400">(optional)</span></label>
-          <textarea id="notes" name="notes" rows="2" placeholder="Any additional details..." maxlength="{MAX_NOTES_LEN}"></textarea>
-        </div>
-        <div class="form-group">
-          <label for="med_date">Date &amp; time <span style="color:#aaa;font-weight:400">(defaults to now)</span></label>
-          <input type="datetime-local" id="med_date" name="med_date" required>
-        </div>
-        <button class="btn-primary med-submit" type="submit">Save Medication</button>
-      </form>
-    </div>
-  </div>
-  <script>
-    const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
-    const localStr = local.toISOString().slice(0, 16);
-    document.getElementById("med_date").value = localStr;
-    document.getElementById("med_date").max = localStr;
-    document.getElementById("client_now").value = localStr;
-    document.querySelector('form[action="/medications"]').addEventListener("submit", () => {{
-      const n = new Date();
-      const l = new Date(n.getTime() - n.getTimezoneOffset() * 60000);
-      document.getElementById("client_now").value = l.toISOString().slice(0, 16);
-    }});
-  </script>
-</body>
-</html>
-"""
+    return RedirectResponse(
+        url="/medications/schedules",
+        status_code=303,
+    )
 
 
 @router.post("/medications")
@@ -303,93 +310,27 @@ def medications_create(
     dose: str = Form(""),
     notes: str = Form(""),
     med_date: str = Form(...),
-    client_now: str = Form(""),
 ):
-    error, ts_dt = _validate_medication_entry(name, dose, notes, med_date, client_now)
-    if error:
-        return RedirectResponse(url=_entry_error_url("/medications/new", error), status_code=303)
-    timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
-    uid = _current_user_id.get()
-    with get_db() as conn:
-        conn.execute(
-            "INSERT INTO medications (name, dose, notes, timestamp, user_id) VALUES (?, ?, ?, ?, ?)",
-            (name.strip(), dose.strip(), notes.strip(), timestamp, uid),
-        )
-        conn.commit()
-    return RedirectResponse(url="/medications", status_code=303)
+    return RedirectResponse(
+        url="/medications/schedules",
+        status_code=303,
+    )
 
 
 @router.post("/medications/delete")
 def medications_delete(id: int = Form(...)):
-    uid = _current_user_id.get()
-    with get_db() as conn:
-        conn.execute("DELETE FROM medications WHERE id = ? AND user_id = ?", (id, uid))
-        conn.commit()
-    return RedirectResponse(url="/medications", status_code=303)
+    return RedirectResponse(
+        url="/medications",
+        status_code=303,
+    )
 
 
 @router.get("/medications/{med_id}/edit", response_class=HTMLResponse)
 def medications_edit_get(med_id: int, error: str = ""):
-    uid = _current_user_id.get()
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT * FROM medications WHERE id = ? AND user_id = ?", (med_id, uid)
-        ).fetchone()
-    if row is None:
-        return RedirectResponse(url="/medications", status_code=303)
-    m = dict(row)
-    dt_local = m["timestamp"].replace(" ", "T")[:16]
-    error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
-    return f"""<!DOCTYPE html>
-<html>
-<head>{PAGE_STYLE}</head>
-<body>
-  {_nav_bar('meds')}
-  <div class="container">
-    <h1>Edit Medication</h1>
-    {error_html}
-    <div class="card">
-      <form method="post" action="/medications/{med_id}/edit">
-        <input type="hidden" id="client_now" name="client_now" value="">
-        <div class="form-group">
-          <label for="med_name">Medication name <span style="color:#ef4444">*</span></label>
-          <input type="text" id="med_name" name="name" value="{html.escape(m['name'])}"
-            required list="med-suggestions" autocomplete="off" maxlength="{MAX_MED_NAME_LEN}">
-          <datalist id="med-suggestions">{_MED_DATALIST}</datalist>
-        </div>
-        <div class="form-group">
-          <label for="dose">Dose <span style="color:#aaa;font-weight:400">(optional)</span></label>
-          <input type="text" id="dose" name="dose" value="{html.escape(m['dose'])}" maxlength="{MAX_DOSE_LEN}">
-        </div>
-        <div class="form-group">
-          <label for="notes">Notes <span style="color:#aaa;font-weight:400">(optional)</span></label>
-          <textarea id="notes" name="notes" rows="2" maxlength="{MAX_NOTES_LEN}">{html.escape(m['notes'])}</textarea>
-        </div>
-        <div class="form-group">
-          <label for="med_date">Date &amp; time</label>
-          <input type="datetime-local" id="med_date" name="med_date"
-            value="{dt_local}" required>
-        </div>
-        <div style="display:flex; gap:12px; align-items:center;">
-          <button class="btn-primary med-submit" type="submit">Save Changes</button>
-          <a href="/medications" class="back">Cancel</a>
-        </div>
-      </form>
-    </div>
-  </div>
-  <script>
-    const _now = new Date();
-    const _local = new Date(_now.getTime() - _now.getTimezoneOffset() * 60000);
-    document.getElementById("med_date").max = _local.toISOString().slice(0, 16);
-    document.getElementById("client_now").value = _local.toISOString().slice(0, 16);
-    document.querySelector('form[action="/medications/{med_id}/edit"]').addEventListener("submit", () => {{
-      const n = new Date();
-      const l = new Date(n.getTime() - n.getTimezoneOffset() * 60000);
-      document.getElementById("client_now").value = l.toISOString().slice(0, 16);
-    }});
-  </script>
-</body>
-</html>"""
+    return RedirectResponse(
+        url="/medications",
+        status_code=303,
+    )
 
 
 @router.post("/medications/{med_id}/edit")
@@ -399,20 +340,8 @@ def medications_edit_post(
     dose: str = Form(""),
     notes: str = Form(""),
     med_date: str = Form(...),
-    client_now: str = Form(""),
 ):
-    error, ts_dt = _validate_medication_entry(name, dose, notes, med_date, client_now)
-    if error:
-        return RedirectResponse(
-            url=_entry_error_url(f"/medications/{med_id}/edit", error), status_code=303
-        )
-    timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
-    uid = _current_user_id.get()
-    with get_db() as conn:
-        conn.execute(
-            "UPDATE medications SET name = ?, dose = ?, notes = ?, timestamp = ?"
-            " WHERE id = ? AND user_id = ?",
-            (name.strip(), dose.strip(), notes.strip(), timestamp, med_id, uid),
-        )
-        conn.commit()
-    return RedirectResponse(url="/medications", status_code=303)
+    return RedirectResponse(
+        url="/medications",
+        status_code=303,
+    )

@@ -1,10 +1,10 @@
 import html
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Form
+from fastapi import APIRouter, Body, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id, _now_local, _today_local
+from config import _current_user_id, _from_utc_storage, _now_local, _to_utc_storage, _today_local
 from db import get_db
 from ui import PAGE_STYLE, _nav_bar
 
@@ -44,22 +44,17 @@ def _parse_valid_scheduled_date(scheduled_date: str, today_ref: date = None):
 
 def _parse_created_at(created_at: str):
     try:
-        return datetime.strptime((created_at or "").strip(), "%Y-%m-%d %H:%M:%S")
+        return _from_utc_storage((created_at or "").strip())
     except ValueError:
         return None
 
 
-def _client_now_or_server(client_now: str) -> datetime:
-    if client_now.strip():
-        try:
-            return datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")
-        except ValueError:
-            pass
+def _client_now_or_server() -> datetime:
     return _now_local()
 
 
-def _client_today_or_server(client_now: str) -> date:
-    return _client_now_or_server(client_now).date()
+def _client_today_or_server() -> date:
+    return _client_now_or_server().date()
 
 
 def _dose_label(dose_num: int, total: int) -> str:
@@ -68,6 +63,62 @@ def _dose_label(dose_num: int, total: int) -> str:
     if total == 2:
         return ["Morning dose", "Evening dose"][dose_num - 1]
     return ["Morning dose", "Afternoon dose", "Evening dose"][dose_num - 1]
+
+
+def _scheduled_day_rows(conn, uid: int, selected_day: date):
+    schedules = conn.execute(
+        "SELECT id, name, dose, frequency, start_date, created_at FROM medication_schedules"
+        " WHERE user_id=? AND active=1 ORDER BY name",
+        (uid,),
+    ).fetchall()
+    dose_rows = conn.execute(
+        "SELECT schedule_id, dose_num, status, taken_at FROM medication_doses"
+        " WHERE user_id=? AND scheduled_date=?",
+        (uid, selected_day.isoformat()),
+    ).fetchall()
+    dose_map = {(r["schedule_id"], r["dose_num"]): r for r in dose_rows}
+
+    rows = []
+    for sched in schedules:
+        sid = sched["id"]
+        created_at = _parse_created_at(sched["created_at"]) if "created_at" in sched.keys() else None
+        if created_at and selected_day < created_at.date():
+            continue
+        sched_start = date.fromisoformat(sched["start_date"])
+        if selected_day < sched_start:
+            continue
+        dpd = _doses_per_day(sched["frequency"])
+        if dpd == 0:
+            prn_taken = [r for r in dose_rows if r["schedule_id"] == sid and r["status"] == "taken"]
+            rows.append(
+                {
+                    "kind": "prn",
+                    "schedule_id": sid,
+                    "name": sched["name"],
+                    "dose": sched["dose"] or "",
+                    "logged_count": len(prn_taken),
+                }
+            )
+            continue
+
+        for dn in range(1, dpd + 1):
+            record = dose_map.get((sid, dn))
+            taken_at = ""
+            if record and record["taken_at"]:
+                taken_at = _from_utc_storage(record["taken_at"]).strftime("%Y-%m-%d %H:%M:%S")
+            rows.append(
+                {
+                    "kind": "scheduled",
+                    "schedule_id": sid,
+                    "name": sched["name"],
+                    "dose": sched["dose"] or "",
+                    "dose_num": dn,
+                    "slot_label": _dose_label(dn, dpd),
+                    "status": (record["status"] if record else "pending"),
+                    "taken_at": taken_at,
+                }
+            )
+    return rows
 
 
 def _adherence_7d(conn, schedule_id: int, user_id: int, start_date_str: str, frequency: str) -> dict:
@@ -188,7 +239,13 @@ def medications_today(d: str = "", w_end: str = ""):
             " WHERE user_id=? AND scheduled_date=?",
             (uid, day_str),
         ).fetchall()
-    dose_map = {(r["schedule_id"], r["dose_num"]): r for r in dose_rows}
+    dose_rows_local = []
+    for r in dose_rows:
+        row = dict(r)
+        if row["taken_at"]:
+            row["taken_at"] = _from_utc_storage(row["taken_at"]).strftime("%Y-%m-%d %H:%M:%S")
+        dose_rows_local.append(row)
+    dose_map = {(r["schedule_id"], r["dose_num"]): r for r in dose_rows_local}
 
     day_tabs = ""
     day_select_options = ""
@@ -236,7 +293,7 @@ def medications_today(d: str = "", w_end: str = ""):
             continue
 
         if dpd == 0:
-            prn_taken = [r for r in dose_rows if r["schedule_id"] == sid and r["status"] == "taken"]
+            prn_taken = [r for r in dose_rows_local if r["schedule_id"] == sid and r["status"] == "taken"]
             prn_count = len(prn_taken)
             prn_logs += prn_count
             prn_word = "dose" if prn_count == 1 else "doses"
@@ -571,13 +628,11 @@ def medications_today(d: str = "", w_end: str = ""):
         if (!(form instanceof HTMLFormElement)) return;
         if (!form.classList.contains("dose-action-form")) return;
         e.preventDefault();
+        const actionUrl = form.action || "";
         const submitBtn = form.querySelector('button[type="submit"]');
         if (submitBtn) submitBtn.disabled = true;
         try {{
-          const now = new Date();
-          const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
           const fd = new FormData(form);
-          fd.set("client_now", local.toISOString().slice(0, 16));
           const res = await fetch(form.action, {{
             method: "POST",
             body: fd,
@@ -585,7 +640,13 @@ def medications_today(d: str = "", w_end: str = ""):
           }});
           if (!res.ok) throw new Error("action failed");
           await refreshTodayShell("", false);
+          if (window._showToast) {{
+            if (actionUrl.includes("/doses/miss")) window._showToast("Dose marked missed", "info");
+            else if (actionUrl.includes("/doses/undo")) window._showToast("Dose entry undone", "info");
+            else window._showToast("Dose saved", "success");
+          }}
         }} catch (_) {{
+          if (window._showToast) window._showToast("Could not save dose action", "error");
           window.location.href = window.location.pathname + window.location.search;
         }} finally {{
           if (submitBtn) submitBtn.disabled = false;
@@ -736,6 +797,12 @@ def schedules_list():
       const notesEl = document.getElementById("sched-notes");
       const saveBtn = document.getElementById("sched-save-btn");
 
+      function getCookie(name) {{
+        const prefix = name + "=";
+        const hit = document.cookie.split(";").map(v => v.trim()).find(v => v.startsWith(prefix));
+        return hit ? decodeURIComponent(hit.slice(prefix.length)) : "";
+      }}
+
       function showForm(editing) {{
         formWrap.style.display = "";
         saveBtn.textContent = editing ? "Save Changes" : "Save Schedule";
@@ -825,6 +892,7 @@ def schedules_list():
         const res = await fetch(url, {{
           method: "POST",
           body: new FormData(formEl),
+          headers: {{ "X-CSRF-Token": getCookie("csrf_token") }},
         }});
         const payload = await res.json();
         if (!res.ok || !payload.ok) {{
@@ -860,7 +928,10 @@ def schedules_list():
         }}
         if (action === "deactivate") {{
           if (!window.confirm("Stop tracking this schedule?")) return;
-          const res = await fetch(`/api/medications/schedules/${{id}}/deactivate`, {{ method: "POST" }});
+          const res = await fetch(`/api/medications/schedules/${{id}}/deactivate`, {{
+            method: "POST",
+            headers: {{ "X-CSRF-Token": getCookie("csrf_token") }},
+          }});
           if (!res.ok) return;
           await loadSchedules();
         }}
@@ -911,7 +982,6 @@ def api_schedules_create(
     frequency: str = Form(""),
     start_date: str = Form(""),
     notes: str = Form(""),
-    client_now: str = Form(""),
 ):
     if not name.strip():
         return JSONResponse({"ok": False, "error": "Medication name is required"}, status_code=400)
@@ -921,11 +991,11 @@ def api_schedules_create(
         sd = date.fromisoformat(start_date)
     except ValueError:
         return JSONResponse({"ok": False, "error": "Invalid start date"}, status_code=400)
-    client_now_dt = _client_now_or_server(client_now)
+    client_now_dt = _client_now_or_server()
     if sd > client_now_dt.date():
         return JSONResponse({"ok": False, "error": "Start date cannot be in the future"}, status_code=400)
     uid = _current_user_id.get()
-    created_at = client_now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    created_at = _to_utc_storage(client_now_dt)
     with get_db() as conn:
         cur = conn.execute(
             "INSERT INTO medication_schedules (user_id, name, dose, notes, frequency, start_date, created_at)"
@@ -949,7 +1019,6 @@ def api_schedules_edit(
     frequency: str = Form(""),
     start_date: str = Form(""),
     notes: str = Form(""),
-    client_now: str = Form(""),
 ):
     if not name.strip():
         return JSONResponse({"ok": False, "error": "Medication name is required"}, status_code=400)
@@ -959,7 +1028,7 @@ def api_schedules_edit(
         sd = date.fromisoformat(start_date)
     except ValueError:
         return JSONResponse({"ok": False, "error": "Invalid start date"}, status_code=400)
-    if sd > _client_today_or_server(client_now):
+    if sd > _client_today_or_server():
         return JSONResponse({"ok": False, "error": "Start date cannot be in the future"}, status_code=400)
     uid = _current_user_id.get()
     with get_db() as conn:
@@ -1050,7 +1119,6 @@ def schedules_create(
     frequency: str = Form(""),
     start_date: str = Form(""),
     notes: str = Form(""),
-    client_now: str = Form(""),
 ):
     if not name.strip():
         return RedirectResponse(url="/medications/schedules/new?error=Medication+name+is+required", status_code=303)
@@ -1060,11 +1128,11 @@ def schedules_create(
         sd = date.fromisoformat(start_date)
     except ValueError:
         return RedirectResponse(url="/medications/schedules/new?error=Invalid+start+date", status_code=303)
-    client_now_dt = _client_now_or_server(client_now)
+    client_now_dt = _client_now_or_server()
     if sd > client_now_dt.date():
         return RedirectResponse(url="/medications/schedules/new?error=Start+date+cannot+be+in+the+future", status_code=303)
     uid = _current_user_id.get()
-    created_at = client_now_dt.strftime("%Y-%m-%d %H:%M:%S")
+    created_at = _to_utc_storage(client_now_dt)
     with get_db() as conn:
         conn.execute(
             "INSERT INTO medication_schedules (user_id, name, dose, notes, frequency, start_date, created_at)"
@@ -1147,7 +1215,6 @@ def schedules_edit_post(
     frequency: str = Form(""),
     start_date: str = Form(""),
     notes: str = Form(""),
-    client_now: str = Form(""),
 ):
     if not name.strip():
         return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Medication+name+is+required", status_code=303)
@@ -1157,7 +1224,7 @@ def schedules_edit_post(
         sd = date.fromisoformat(start_date)
     except ValueError:
         return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Invalid+start+date", status_code=303)
-    if sd > _client_today_or_server(client_now):
+    if sd > _client_today_or_server():
         return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Start+date+cannot+be+in+the+future", status_code=303)
     uid = _current_user_id.get()
     with get_db() as conn:
@@ -1189,12 +1256,11 @@ def doses_take(
     scheduled_date: str = Form(...),
     dose_num: int = Form(1),
     taken_time: str = Form(""),
-    client_now: str = Form(""),
     redirect_to: str = Form("/medications/today"),
 ):
     uid = _current_user_id.get()
     redirect_to = _safe_meds_redirect(redirect_to)
-    now_dt = _client_now_or_server(client_now)
+    now_dt = _client_now_or_server()
     scheduled_day = _parse_valid_scheduled_date(scheduled_date, now_dt.date())
     if scheduled_day is None or dose_num < 1:
         return RedirectResponse(url=redirect_to, status_code=303)
@@ -1206,7 +1272,7 @@ def doses_take(
             return RedirectResponse(url=redirect_to, status_code=303)
         if taken_dt > now_dt:
             return RedirectResponse(url=redirect_to, status_code=303)
-    taken_at = taken_dt.strftime("%Y-%m-%d %H:%M:%S")
+    taken_at = _to_utc_storage(taken_dt)
     with get_db() as conn:
         sched = conn.execute(
             "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
@@ -1243,12 +1309,11 @@ def doses_miss(
     schedule_id: int = Form(...),
     scheduled_date: str = Form(...),
     dose_num: int = Form(1),
-    client_now: str = Form(""),
     redirect_to: str = Form("/medications/today"),
 ):
     uid = _current_user_id.get()
     redirect_to = _safe_meds_redirect(redirect_to)
-    scheduled_day = _parse_valid_scheduled_date(scheduled_date, _client_today_or_server(client_now))
+    scheduled_day = _parse_valid_scheduled_date(scheduled_date, _client_today_or_server())
     if scheduled_day is None or dose_num < 1:
         return RedirectResponse(url=redirect_to, status_code=303)
     with get_db() as conn:
@@ -1285,12 +1350,11 @@ def doses_undo(
     schedule_id: int = Form(...),
     scheduled_date: str = Form(...),
     dose_num: int = Form(1),
-    client_now: str = Form(""),
     redirect_to: str = Form("/medications/today"),
 ):
     uid = _current_user_id.get()
     redirect_to = _safe_meds_redirect(redirect_to)
-    scheduled_day = _parse_valid_scheduled_date(scheduled_date, _client_today_or_server(client_now))
+    scheduled_day = _parse_valid_scheduled_date(scheduled_date, _client_today_or_server())
     if scheduled_day is None or dose_num < 1:
         return RedirectResponse(url=redirect_to, status_code=303)
     with get_db() as conn:
@@ -1339,3 +1403,113 @@ def api_medications_adherence():
                 "expected_7d": adh["expected"],
             })
     return JSONResponse({"schedules": result})
+
+
+@router.get("/api/medications/day")
+def api_medications_day(d: str = ""):
+    uid = _current_user_id.get()
+    day = _parse_valid_scheduled_date(d, _today_local())
+    if day is None:
+        return JSONResponse({"ok": False, "error": "Invalid date"}, status_code=400)
+    with get_db() as conn:
+        rows = _scheduled_day_rows(conn, uid, day)
+    return JSONResponse({"ok": True, "date": day.isoformat(), "rows": rows})
+
+
+def _take_dose_json(uid: int, schedule_id: int, scheduled_day: date, dose_num: int, taken_time: str):
+    now_dt = _client_now_or_server()
+    taken_dt = now_dt
+    if taken_time.strip():
+        try:
+            taken_dt = datetime.strptime(f"{scheduled_day.isoformat()} {taken_time.strip()}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            return JSONResponse({"ok": False, "error": "Invalid time"}, status_code=400)
+        if taken_dt > now_dt:
+            return JSONResponse({"ok": False, "error": "Time cannot be in the future"}, status_code=400)
+    taken_at = _to_utc_storage(taken_dt)
+    with get_db() as conn:
+        sched = conn.execute(
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
+            (schedule_id, uid),
+        ).fetchone()
+        if not sched:
+            return JSONResponse({"ok": False, "error": "Schedule not found"}, status_code=404)
+        sched_start = date.fromisoformat(sched["start_date"])
+        if scheduled_day < sched_start:
+            return JSONResponse({"ok": False, "error": "Date before schedule start"}, status_code=400)
+        created_at = _parse_created_at(sched["created_at"])
+        if created_at and scheduled_day < created_at.date():
+            return JSONResponse({"ok": False, "error": "Date before schedule created"}, status_code=400)
+        if created_at and scheduled_day == created_at.date() and taken_dt < created_at:
+            return JSONResponse({"ok": False, "error": "Time before schedule created"}, status_code=400)
+        dpd = _doses_per_day(sched["frequency"])
+        if dose_num < 1 or (dpd > 0 and dose_num > dpd):
+            return JSONResponse({"ok": False, "error": "Invalid dose slot"}, status_code=400)
+        conn.execute(
+            "DELETE FROM medication_doses WHERE schedule_id=? AND user_id=? AND scheduled_date=? AND dose_num=?",
+            (schedule_id, uid, scheduled_day.isoformat(), dose_num),
+        )
+        conn.execute(
+            "INSERT INTO medication_doses (schedule_id, user_id, scheduled_date, dose_num, taken_at, status)"
+            " VALUES (?,?,?,?,?,'taken')",
+            (schedule_id, uid, scheduled_day.isoformat(), dose_num, taken_at),
+        )
+        conn.commit()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/api/medications/doses/take")
+def api_doses_take(payload: dict = Body(...)):
+    uid = _current_user_id.get()
+    try:
+        schedule_id = int(payload.get("schedule_id", 0))
+        dose_num = int(payload.get("dose_num", 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"ok": False, "error": "Invalid dose payload"}, status_code=400)
+    taken_time = str(payload.get("taken_time", ""))
+    d = str(payload.get("scheduled_date", ""))
+    scheduled_day = _parse_valid_scheduled_date(d, _client_today_or_server())
+    if scheduled_day is None:
+        return JSONResponse({"ok": False, "error": "Invalid date"}, status_code=400)
+    return _take_dose_json(uid, schedule_id, scheduled_day, dose_num, taken_time)
+
+
+@router.post("/api/medications/doses/miss")
+def api_doses_miss(payload: dict = Body(...)):
+    uid = _current_user_id.get()
+    try:
+        schedule_id = int(payload.get("schedule_id", 0))
+        dose_num = int(payload.get("dose_num", 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"ok": False, "error": "Invalid dose payload"}, status_code=400)
+    d = str(payload.get("scheduled_date", ""))
+    scheduled_day = _parse_valid_scheduled_date(d, _client_today_or_server())
+    if scheduled_day is None:
+        return JSONResponse({"ok": False, "error": "Invalid date"}, status_code=400)
+    with get_db() as conn:
+        sched = conn.execute(
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
+            (schedule_id, uid),
+        ).fetchone()
+        if not sched:
+            return JSONResponse({"ok": False, "error": "Schedule not found"}, status_code=404)
+        sched_start = date.fromisoformat(sched["start_date"])
+        if scheduled_day < sched_start:
+            return JSONResponse({"ok": False, "error": "Date before schedule start"}, status_code=400)
+        created_at = _parse_created_at(sched["created_at"])
+        if created_at and scheduled_day < created_at.date():
+            return JSONResponse({"ok": False, "error": "Date before schedule created"}, status_code=400)
+        dpd = _doses_per_day(sched["frequency"])
+        if dose_num < 1 or (dpd > 0 and dose_num > dpd):
+            return JSONResponse({"ok": False, "error": "Invalid dose slot"}, status_code=400)
+        conn.execute(
+            "DELETE FROM medication_doses WHERE schedule_id=? AND user_id=? AND scheduled_date=? AND dose_num=?",
+            (schedule_id, uid, scheduled_day.isoformat(), dose_num),
+        )
+        conn.execute(
+            "INSERT INTO medication_doses (schedule_id, user_id, scheduled_date, dose_num, taken_at, status)"
+            " VALUES (?,?,?,?,'','missed')",
+            (schedule_id, uid, scheduled_day.isoformat(), dose_num),
+        )
+        conn.commit()
+    return JSONResponse({"ok": True})

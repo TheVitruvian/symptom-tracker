@@ -242,18 +242,19 @@ def _nav_bar(active: str = "") -> str:
         + '<nav style="background:#1e3a8a;">'
         # ── Desktop row ───────────────────────────────────────────────────
         '<div style="padding:0 24px; height:52px; display:flex; align-items:center; gap:20px;">'
-        '<span style="font-weight:800; color:#fff; font-size:15px; flex-shrink:0; margin-right:8px;">'
-        'Symptom Tracker</span>'
+        '<a href="/symptoms/chart" style="display:inline-flex;align-items:center;flex-shrink:0;margin-right:8px;">'
+        '<img src="/static/logo.jpg" alt="Symptom Tracker" style="height:28px;width:auto;display:block;">'
+        '</a>'
         '<div class="nav-desktop-links">'
         + dlnk("/symptoms/chart", "Health Report", "chart")
         + dlnk("/symptoms/calendar", "Calendar", "calendar")
         + dlnk("/medications/today", "Meds", "meds")
         + '</div>'
         '<div class="nav-desktop-actions">'
-        '<a href="/symptoms/new" style="background:#fff; color:#1e3a8a; text-decoration:none;'
+        '<a href="/symptoms/calendar?open_symptom_modal=1" style="background:#fff; color:#1e3a8a; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:6px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Symptom</a>'
-        '<a href="/medications" style="background:#a855f7; color:#fff; text-decoration:none;'
+        '<a href="/medications/today" style="background:#a855f7; color:#fff; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:6px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Medication</a>'
         + dlnk("/profile", "Profile", "profile")
@@ -274,10 +275,10 @@ def _nav_bar(active: str = "") -> str:
         + mlnk("/medications/today", "Meds", "meds")
         + mlnk("/profile", "Profile", "profile")
         + '<div style="display:flex; gap:8px; flex-wrap:wrap; padding:12px 0 4px;">'
-        '<a href="/symptoms/new" style="background:#fff; color:#1e3a8a; text-decoration:none;'
+        '<a href="/symptoms/calendar?open_symptom_modal=1" style="background:#fff; color:#1e3a8a; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:7px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Symptom</a>'
-        '<a href="/medications" style="background:#a855f7; color:#fff; text-decoration:none;'
+        '<a href="/medications/today" style="background:#a855f7; color:#fff; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:7px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Medication</a>'
         f'<form method="post" action="{logout_action}" style="margin:0;">'
@@ -295,69 +296,7 @@ def _nav_bar(active: str = "") -> str:
 PAGE_STYLE = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script>
-    (function () {
-      // Backward-compatible global nav toggle for pages that still call _navToggle().
-      window._navToggle = function () {
-        var m = document.getElementById("nav-menu");
-        var b = document.getElementById("nav-toggle");
-        if (!m || !b) return;
-        m.classList.toggle("open");
-        b.innerHTML = m.classList.contains("open") ? "&#10005;" : "&#9776;";
-      };
-
-      function clientNowLocal() {
-        var n = new Date();
-        var l = new Date(n.getTime() - n.getTimezoneOffset() * 60000);
-        return l.toISOString().slice(0, 16);
-      }
-      function setCookie(name, value) {
-        document.cookie = name + "=" + encodeURIComponent(value) + "; path=/; max-age=31536000; SameSite=Lax";
-      }
-      window._clientNowLocal = clientNowLocal;
-      window._applyClientTimeDefaults = function (root) {
-        var ctx = root || document;
-        var nowStr = clientNowLocal();
-        var dayStr = nowStr.slice(0, 10);
-        window.__clientNowLocal = nowStr;
-        window.__clientDateLocal = dayStr;
-        ctx.querySelectorAll("form").forEach(function (f) {
-          var c = f.querySelector('input[name="client_now"]');
-          if (!c) {
-            c = document.createElement("input");
-            c.type = "hidden";
-            c.name = "client_now";
-            f.appendChild(c);
-          }
-          c.value = nowStr;
-          if (!f.dataset.clientNowBound) {
-            f.addEventListener("submit", function () { c.value = clientNowLocal(); });
-            f.dataset.clientNowBound = "1";
-          }
-        });
-        ctx.querySelectorAll('input[type="date"]').forEach(function (el) {
-          if (!el.value && !el.dataset.noClientDefault) el.value = dayStr;
-          if (!el.max) el.max = dayStr;
-        });
-        ctx.querySelectorAll('input[type="datetime-local"]').forEach(function (el) {
-          if (!el.value && !el.dataset.noClientDefault) el.value = nowStr;
-          if (!el.max) el.max = nowStr;
-        });
-      };
-      setCookie("tz_offset", String(new Date().getTimezoneOffset()));
-      try {
-        var tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-        if (tz) setCookie("tz", tz);
-      } catch (_) {}
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", function () {
-          window._applyClientTimeDefaults(document);
-        });
-      } else {
-        window._applyClientTimeDefaults(document);
-      }
-    })();
-  </script>
+  <script defer src="/static/app.js?v=1"></script>
   <style>
     body { font-family: system-ui, sans-serif; background: #f5f5f5; margin: 0; padding: 0; color: #222; }
     .container { max-width: 560px; margin: 0 auto; padding: 24px; }

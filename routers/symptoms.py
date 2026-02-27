@@ -1,34 +1,61 @@
 import html
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Form
+from fastapi import APIRouter, Body, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id, _now_local
+from config import _current_user_id, _from_utc_storage, _now_local, _to_utc_storage
 from db import get_db
 from ui import PAGE_STYLE, _nav_bar, _sidebar, _severity_color
 
 router = APIRouter()
+SOFT_DELETE_RECOVERY_SECONDS = 20
 
 
-def _client_now_or_server(client_now: str) -> datetime:
-    if client_now.strip():
-        try:
-            return datetime.strptime(client_now.strip(), "%Y-%m-%dT%H:%M")
-        except ValueError:
-            pass
+def _client_now_or_server() -> datetime:
     return _now_local()
+
+
+def _validate_symptom_payload(
+    name: str,
+    severity: int,
+    notes: str,
+    symptom_date: str,
+    end_date: str,
+):
+    if not name.strip():
+        return ("Symptom name is required", None, None)
+    if not (1 <= severity <= 10):
+        return ("Severity must be between 1 and 10", None, None)
+    try:
+        ts_dt = datetime.strptime(symptom_date, "%Y-%m-%dT%H:%M")
+    except ValueError:
+        return ("Invalid date format", None, None)
+    now_ref = _client_now_or_server()
+    if ts_dt > now_ref:
+        return ("Date cannot be in the future", None, None)
+    end_dt = None
+    if end_date.strip():
+        try:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M")
+        except ValueError:
+            return ("Invalid end date format", None, None)
+        if end_dt > now_ref:
+            return ("End date cannot be in the future", None, None)
+        if end_dt <= ts_dt:
+            return ("End date must be after start date", None, None)
+    return ("", ts_dt, end_dt)
 
 
 def _fmt_duration(start_str: str, end_str: str) -> str:
     """Return a human-readable duration string for a symptom entry."""
     if not end_str:
-        return start_str
-    start_dt = datetime.strptime(start_str, "%Y-%m-%d %H:%M:%S")
-    end_dt = datetime.strptime(end_str, "%Y-%m-%d %H:%M:%S")
-    start_time = start_str[11:16]
-    end_time_str = end_str[11:16]
-    if start_str[:10] == end_str[:10]:
+        return _from_utc_storage(start_str).strftime("%Y-%m-%d %H:%M:%S")
+    start_dt = _from_utc_storage(start_str)
+    end_dt = _from_utc_storage(end_str)
+    start_time = start_dt.strftime("%H:%M")
+    end_time_str = end_dt.strftime("%H:%M")
+    if start_dt.date() == end_dt.date():
         return f"{start_dt.strftime('%b')} {start_dt.day} \u2014 {start_time}\u2013{end_time_str}"
     else:
         return (
@@ -140,35 +167,19 @@ def symptoms_create(
     notes: str = Form(""),
     symptom_date: str = Form(...),
     end_date: str = Form(""),
-    client_now: str = Form(""),
 ):
-    if not name.strip():
-        return RedirectResponse(url="/symptoms/new?error=Symptom+name+is+required", status_code=303)
-    if not (1 <= severity <= 10):
-        return RedirectResponse(url="/symptoms/new?error=Severity+must+be+between+1+and+10", status_code=303)
-    try:
-        ts_dt = datetime.strptime(symptom_date, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return RedirectResponse(url="/symptoms/new?error=Invalid+date+format", status_code=303)
-    now_ref = _client_now_or_server(client_now)
-    if ts_dt > now_ref:
-        return RedirectResponse(url="/symptoms/new?error=Date+cannot+be+in+the+future", status_code=303)
-    timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
+    error, ts_dt, end_dt = _validate_symptom_payload(name, severity, notes, symptom_date, end_date)
+    if error:
+        return RedirectResponse(url="/symptoms/new?error=" + error.replace(" ", "+"), status_code=303)
+    timestamp = _to_utc_storage(ts_dt)
     end_time = ""
-    if end_date.strip():
-        try:
-            end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M")
-        except ValueError:
-            return RedirectResponse(url="/symptoms/new?error=Invalid+end+date+format", status_code=303)
-        if end_dt > now_ref:
-            return RedirectResponse(url="/symptoms/new?error=End+date+cannot+be+in+the+future", status_code=303)
-        if end_dt <= ts_dt:
-            return RedirectResponse(url="/symptoms/new?error=End+date+must+be+after+start+date", status_code=303)
-        end_time = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+    if end_dt:
+        end_time = _to_utc_storage(end_dt)
     uid = _current_user_id.get()
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO symptoms (name, severity, notes, timestamp, end_time, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO symptoms (name, severity, notes, timestamp, end_time, user_id, deleted_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, '')",
             (name.strip(), severity, notes.strip(), timestamp, end_time, uid),
         )
         conn.commit()
@@ -178,8 +189,12 @@ def symptoms_create(
 @router.post("/symptoms/delete")
 def symptoms_delete(id: int = Form(...)):
     uid = _current_user_id.get()
+    deleted_at = _to_utc_storage(_client_now_or_server())
     with get_db() as conn:
-        conn.execute("DELETE FROM symptoms WHERE id = ? AND user_id = ?", (id, uid))
+        conn.execute(
+            "UPDATE symptoms SET deleted_at = ? WHERE id = ? AND user_id = ? AND deleted_at = ''",
+            (deleted_at, id, uid),
+        )
         conn.commit()
     return RedirectResponse(url="/symptoms", status_code=303)
 
@@ -189,13 +204,13 @@ def symptoms_edit_get(sym_id: int, error: str = ""):
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute(
-            "SELECT * FROM symptoms WHERE id = ? AND user_id = ?", (sym_id, uid)
+            "SELECT * FROM symptoms WHERE id = ? AND user_id = ? AND deleted_at = ''", (sym_id, uid)
         ).fetchone()
     if row is None:
         return RedirectResponse(url="/symptoms", status_code=303)
     e = dict(row)
-    dt_local = e["timestamp"].replace(" ", "T")[:16]
-    end_local = e["end_time"].replace(" ", "T")[:16] if e.get("end_time") else ""
+    dt_local = _from_utc_storage(e["timestamp"]).strftime("%Y-%m-%dT%H:%M")
+    end_local = _from_utc_storage(e["end_time"]).strftime("%Y-%m-%dT%H:%M") if e.get("end_time") else ""
     sev = e["severity"]
     error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
     return f"""<!DOCTYPE html>
@@ -290,36 +305,21 @@ def symptoms_edit_post(
     notes: str = Form(""),
     symptom_date: str = Form(...),
     end_date: str = Form(""),
-    client_now: str = Form(""),
 ):
-    if not name.strip():
-        return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Symptom+name+is+required", status_code=303)
-    if not (1 <= severity <= 10):
-        return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Severity+must+be+between+1+and+10", status_code=303)
-    try:
-        ts_dt = datetime.strptime(symptom_date, "%Y-%m-%dT%H:%M")
-    except ValueError:
-        return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Invalid+date+format", status_code=303)
-    now_ref = _client_now_or_server(client_now)
-    if ts_dt > now_ref:
-        return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Date+cannot+be+in+the+future", status_code=303)
-    timestamp = ts_dt.strftime("%Y-%m-%d %H:%M:%S")
+    error, ts_dt, end_dt = _validate_symptom_payload(name, severity, notes, symptom_date, end_date)
+    if error:
+        return RedirectResponse(
+            url=f"/symptoms/{sym_id}/edit?error=" + error.replace(" ", "+"), status_code=303
+        )
+    timestamp = _to_utc_storage(ts_dt)
     end_time = ""
-    if end_date.strip():
-        try:
-            end_dt = datetime.strptime(end_date, "%Y-%m-%dT%H:%M")
-        except ValueError:
-            return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=Invalid+end+date+format", status_code=303)
-        if end_dt > now_ref:
-            return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=End+date+cannot+be+in+the+future", status_code=303)
-        if end_dt <= ts_dt:
-            return RedirectResponse(url=f"/symptoms/{sym_id}/edit?error=End+date+must+be+after+start+date", status_code=303)
-        end_time = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+    if end_dt:
+        end_time = _to_utc_storage(end_dt)
     uid = _current_user_id.get()
     with get_db() as conn:
         conn.execute(
             "UPDATE symptoms SET name = ?, severity = ?, notes = ?, timestamp = ?, end_time = ?"
-            " WHERE id = ? AND user_id = ?",
+            " WHERE id = ? AND user_id = ? AND deleted_at = ''",
             (name.strip(), severity, notes.strip(), timestamp, end_time, sym_id, uid),
         )
         conn.commit()
@@ -332,7 +332,125 @@ def api_symptoms():
     with get_db() as conn:
         rows = conn.execute(
             "SELECT id, name, severity, notes, timestamp, end_time FROM symptoms"
-            " WHERE user_id = ? ORDER BY timestamp ASC",
+            " WHERE user_id = ? AND deleted_at = '' ORDER BY timestamp ASC",
             (uid,),
         ).fetchall()
-    return JSONResponse({"symptoms": [dict(r) for r in rows]})
+    items = []
+    for r in rows:
+        item = dict(r)
+        item["timestamp"] = _from_utc_storage(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+        if item["end_time"]:
+            item["end_time"] = _from_utc_storage(item["end_time"]).strftime("%Y-%m-%d %H:%M:%S")
+        items.append(item)
+    return JSONResponse({"symptoms": items})
+
+
+@router.post("/api/symptoms")
+def api_symptoms_create(payload: dict = Body(...)):
+    uid = _current_user_id.get()
+    name = str(payload.get("name", ""))
+    severity = int(payload.get("severity", 0))
+    notes = str(payload.get("notes", ""))
+    symptom_date = str(payload.get("symptom_date", ""))
+    end_date = str(payload.get("end_date", ""))
+    error, ts_dt, end_dt = _validate_symptom_payload(name, severity, notes, symptom_date, end_date)
+    if error:
+        return JSONResponse({"ok": False, "error": error}, status_code=400)
+    timestamp = _to_utc_storage(ts_dt)
+    end_time = _to_utc_storage(end_dt) if end_dt else ""
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO symptoms (name, severity, notes, timestamp, end_time, user_id, deleted_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, '')",
+            (name.strip(), severity, notes.strip(), timestamp, end_time, uid),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, name, severity, notes, timestamp, end_time FROM symptoms WHERE id = ? AND user_id = ?",
+            (cur.lastrowid, uid),
+        ).fetchone()
+    item = dict(row)
+    item["timestamp"] = _from_utc_storage(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+    if item["end_time"]:
+        item["end_time"] = _from_utc_storage(item["end_time"]).strftime("%Y-%m-%d %H:%M:%S")
+    return JSONResponse({"ok": True, "symptom": item})
+
+
+@router.post("/api/symptoms/{sym_id}/edit")
+def api_symptoms_edit(sym_id: int, payload: dict = Body(...)):
+    uid = _current_user_id.get()
+    name = str(payload.get("name", ""))
+    severity = int(payload.get("severity", 0))
+    notes = str(payload.get("notes", ""))
+    symptom_date = str(payload.get("symptom_date", ""))
+    end_date = str(payload.get("end_date", ""))
+    error, ts_dt, end_dt = _validate_symptom_payload(name, severity, notes, symptom_date, end_date)
+    if error:
+        return JSONResponse({"ok": False, "error": error}, status_code=400)
+    timestamp = _to_utc_storage(ts_dt)
+    end_time = _to_utc_storage(end_dt) if end_dt else ""
+    with get_db() as conn:
+        exists = conn.execute(
+            "SELECT id FROM symptoms WHERE id = ? AND user_id = ? AND deleted_at = ''", (sym_id, uid)
+        ).fetchone()
+        if not exists:
+            return JSONResponse({"ok": False, "error": "Symptom not found"}, status_code=404)
+        conn.execute(
+            "UPDATE symptoms SET name = ?, severity = ?, notes = ?, timestamp = ?, end_time = ?"
+            " WHERE id = ? AND user_id = ? AND deleted_at = ''",
+            (name.strip(), severity, notes.strip(), timestamp, end_time, sym_id, uid),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, name, severity, notes, timestamp, end_time FROM symptoms WHERE id = ? AND user_id = ?",
+            (sym_id, uid),
+        ).fetchone()
+    item = dict(row)
+    item["timestamp"] = _from_utc_storage(item["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+    if item["end_time"]:
+        item["end_time"] = _from_utc_storage(item["end_time"]).strftime("%Y-%m-%d %H:%M:%S")
+    return JSONResponse({"ok": True, "symptom": item})
+
+
+@router.post("/api/symptoms/{sym_id}/soft-delete")
+def api_symptoms_soft_delete(sym_id: int):
+    uid = _current_user_id.get()
+    deleted_at = _to_utc_storage(_client_now_or_server())
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM symptoms WHERE id = ? AND user_id = ? AND deleted_at = ''",
+            (sym_id, uid),
+        ).fetchone()
+        if not row:
+            return JSONResponse({"ok": False, "error": "Symptom not found"}, status_code=404)
+        conn.execute(
+            "UPDATE symptoms SET deleted_at = ? WHERE id = ? AND user_id = ?",
+            (deleted_at, sym_id, uid),
+        )
+        conn.commit()
+    return JSONResponse({"ok": True, "undo_window_seconds": SOFT_DELETE_RECOVERY_SECONDS})
+
+
+@router.post("/api/symptoms/{sym_id}/restore")
+def api_symptoms_restore(sym_id: int):
+    uid = _current_user_id.get()
+    now_local = _client_now_or_server()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT deleted_at FROM symptoms WHERE id = ? AND user_id = ?",
+            (sym_id, uid),
+        ).fetchone()
+        if not row:
+            return JSONResponse({"ok": False, "error": "Symptom not found"}, status_code=404)
+        deleted_at_raw = row["deleted_at"] or ""
+        if not deleted_at_raw:
+            return JSONResponse({"ok": False, "error": "Symptom is not deleted"}, status_code=400)
+        deleted_at_local = _from_utc_storage(deleted_at_raw)
+        if now_local - deleted_at_local > timedelta(seconds=SOFT_DELETE_RECOVERY_SECONDS):
+            return JSONResponse({"ok": False, "error": "Undo window expired"}, status_code=400)
+        conn.execute(
+            "UPDATE symptoms SET deleted_at = '' WHERE id = ? AND user_id = ?",
+            (sym_id, uid),
+        )
+        conn.commit()
+    return JSONResponse({"ok": True})

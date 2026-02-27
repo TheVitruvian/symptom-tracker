@@ -1,7 +1,7 @@
 import os
 import secrets
 from contextvars import ContextVar
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -47,6 +47,28 @@ def _now_local() -> datetime:
 
 def _today_local() -> date:
     return _now_local().date()
+
+
+def _to_utc_storage(dt_local: datetime) -> str:
+    """Convert request-local naive datetime to UTC storage format."""
+    offset = _client_tz_offset_min.get()
+    if offset is not None:
+        dt_utc = dt_local + timedelta(minutes=offset)
+        return dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+    # Fallback: interpret naive datetime in server local timezone.
+    server_tz = datetime.now().astimezone().tzinfo
+    dt_utc = dt_local.replace(tzinfo=server_tz).astimezone(timezone.utc).replace(tzinfo=None)
+    return dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _from_utc_storage(ts: str) -> datetime:
+    """Convert UTC storage string to request-local naive datetime."""
+    dt_utc = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+    offset = _client_tz_offset_min.get()
+    if offset is not None:
+        return dt_utc - timedelta(minutes=offset)
+    server_tz = datetime.now().astimezone().tzinfo
+    return dt_utc.replace(tzinfo=timezone.utc).astimezone(server_tz).replace(tzinfo=None)
 
 
 def _load_secret_key() -> str:

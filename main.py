@@ -3,6 +3,7 @@ load_dotenv()
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from config import (
     PUBLIC_PATHS,
@@ -35,6 +36,7 @@ for _ext in ["jpg", "png", "gif", "webp"]:
         _old_photo.rename(_new_photo)
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.middleware("http")
