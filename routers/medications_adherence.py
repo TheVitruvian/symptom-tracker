@@ -809,6 +809,7 @@ def medications_today(d: str = "", w_end: str = ""):
         currentShell.replaceWith(nextShell);
         if (pushState) window.history.pushState({{}}, "", targetUrl);
         initDoseTimeInputs(document);
+        await loadDayFromApi(selectedDayFromUrl());
       }}
 
       async function ensureClientDateDefaults() {{

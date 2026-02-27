@@ -1374,19 +1374,15 @@ def symptoms_calendar():
     .med-dose-btn-take:hover { background:#dcfce7; }
     .med-dose-btn-miss { background:#fef2f2; color:#991b1b; border-color:#fecaca; }
     .med-dose-btn-miss:hover { background:#fee2e2; }
-    .med-dose-time {
-      border:1px solid #d1d5db; border-radius:7px; padding:0 9px; font-size:12px; font-family:inherit;
-      height:30px; min-height:30px; width:118px; box-sizing:border-box; line-height:1;
-      background:#fff; color:#374151;
-    }
+    .med-dose-time,
     .med-dose-date {
       border:1px solid #d1d5db; border-radius:7px; padding:0 9px; font-size:12px; font-family:inherit;
-      height:30px; min-height:30px; width:142px; box-sizing:border-box; line-height:1;
+      height:30px; min-height:30px; box-sizing:border-box; line-height:1;
       background:#fff; color:#374151;
     }
-    .med-dose-date:focus {
-      outline:none; border-color:#9ca3af; box-shadow:none;
-      background:#fff;
+    .med-dose-time { width:118px; }
+    .med-dose-date {
+      width:118px;
     }
     .med-dose-date::-webkit-calendar-picker-indicator { cursor:pointer; opacity:.75; }
     .detail-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
