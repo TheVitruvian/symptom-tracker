@@ -4,6 +4,8 @@ import logging
 import os
 import secrets
 import smtplib
+import threading
+from collections import defaultdict
 from email.mime.text import MIMEText
 from time import time
 from typing import Optional
@@ -21,6 +23,37 @@ from config import (
 from db import get_db
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# In-memory rate limiting (per-IP, resets on server restart)
+# ---------------------------------------------------------------------------
+_rate_lock = threading.Lock()
+_login_buckets: dict[str, list[float]] = defaultdict(list)
+_reset_buckets: dict[str, list[float]] = defaultdict(list)
+
+_LOGIN_WINDOW = 300   # 5 minutes
+_LOGIN_MAX = 10       # attempts per window per IP
+_RESET_WINDOW = 900   # 15 minutes
+_RESET_MAX = 5        # attempts per window per IP
+
+
+def _check_rate_limit(bucket: dict, ip: str, window: int, max_attempts: int) -> bool:
+    """Return True if the request should be allowed, False if rate limited."""
+    now = time()
+    with _rate_lock:
+        bucket[ip] = [t for t in bucket[ip] if now - t < window]
+        if len(bucket[ip]) >= max_attempts:
+            return False
+        bucket[ip].append(now)
+        return True
+
+
+def _is_login_allowed(ip: str) -> bool:
+    return _check_rate_limit(_login_buckets, ip, _LOGIN_WINDOW, _LOGIN_MAX)
+
+
+def _is_reset_allowed(ip: str) -> bool:
+    return _check_rate_limit(_reset_buckets, ip, _RESET_WINDOW, _RESET_MAX)
 
 
 def _request_origin_host(request: Request) -> str:
@@ -59,6 +92,13 @@ def _csrf_header_valid(request: Request) -> bool:
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
     header_token = request.headers.get("x-csrf-token", "")
     return bool(cookie_token) and hmac.compare_digest(cookie_token, header_token)
+
+
+def _csrf_query_valid(request: Request) -> bool:
+    """Check CSRF token submitted as a query parameter (used by HTML form POSTs)."""
+    cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
+    query_token = request.query_params.get("_csrf", "")
+    return bool(cookie_token) and hmac.compare_digest(cookie_token, query_token)
 
 
 def _hash_password(plaintext: str) -> str:

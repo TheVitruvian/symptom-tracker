@@ -21,6 +21,7 @@ from security import (
     _has_any_patient,
     _ensure_csrf_cookie,
     _csrf_header_valid,
+    _csrf_query_valid,
     _is_same_origin,
 )
 from routers import auth, symptoms, symptoms_analytics, medications, medications_adherence, profile, physician
@@ -48,8 +49,15 @@ async def auth_middleware(request: Request, call_next):
             if path.startswith("/api/"):
                 return JSONResponse({"error": "forbidden"}, status_code=403)
             return RedirectResponse(url="/login?error=Forbidden+request", status_code=303)
-        if path.startswith("/api/") and not _csrf_header_valid(request):
-            return JSONResponse({"error": "forbidden"}, status_code=403)
+        if path.startswith("/api/"):
+            if not _csrf_header_valid(request):
+                return JSONResponse({"error": "forbidden"}, status_code=403)
+        elif path not in PUBLIC_PATHS and not path.startswith("/physician"):
+            # Require CSRF query param for authenticated patient form POSTs.
+            # Excludes public routes (login/signup) and physician routes which
+            # have their own auth and don't use the JS form injection.
+            if not _csrf_query_valid(request):
+                return RedirectResponse(url="/login?error=Forbidden+request", status_code=303)
     # Physician-only routes
     if path.startswith("/physician"):
         if path in {"/physician/login", "/physician/signup"}:

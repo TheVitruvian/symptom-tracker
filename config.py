@@ -25,6 +25,13 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 PUBLIC_PATHS = {"/", "/login", "/signup", "/logout", "/forgot-password", "/reset-password"}
 RESET_TOKEN_TTL_SECONDS = 3600  # 1 hour
 
+FREQ_LABELS: dict[str, str] = {
+    "once_daily":  "Once daily",
+    "twice_daily": "Twice daily",
+    "three_daily": "Three times daily",
+    "prn":         "As needed (PRN)",
+}
+
 
 def _set_client_clock(tz_offset_cookie: str):
     """Set per-request client-local clock derived from JS timezone offset cookie."""
@@ -35,7 +42,7 @@ def _set_client_clock(tz_offset_cookie: str):
         offset = None
     if offset is not None and -840 <= offset <= 840:
         _client_tz_offset_min.set(offset)
-        _client_now.set(datetime.utcnow() - timedelta(minutes=offset))
+        _client_now.set(datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=offset))
         return
     _client_tz_offset_min.set(None)
     _client_now.set(datetime.now())
@@ -78,7 +85,10 @@ def _load_secret_key() -> str:
     if SECRET_KEY_PATH.exists():
         return SECRET_KEY_PATH.read_text(encoding="utf-8").strip()
     key = secrets.token_hex(32)
-    SECRET_KEY_PATH.write_text(key, encoding="utf-8")
+    # Write with owner-only permissions (rw-------) so the key isn't world-readable
+    fd = os.open(str(SECRET_KEY_PATH), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(key)
     return key
 
 

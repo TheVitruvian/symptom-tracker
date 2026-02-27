@@ -4,18 +4,13 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Body, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id, _from_utc_storage, _now_local, _to_utc_storage, _today_local
+from config import _current_user_id, _from_utc_storage, _now_local, _to_utc_storage, _today_local, FREQ_LABELS
 from db import get_db
+from routers.medications_utils import _adherence_7d, _adherence_badge
 from ui import PAGE_STYLE, _nav_bar
 
 router = APIRouter()
 
-FREQ_LABELS = {
-    "once_daily":  "Once daily",
-    "twice_daily": "Twice daily",
-    "three_daily": "Three times daily",
-    "prn":         "As needed (PRN)",
-}
 VALID_FREQUENCIES = set(FREQ_LABELS)
 
 
@@ -68,7 +63,7 @@ def _dose_label(dose_num: int, total: int) -> str:
 def _scheduled_day_rows(conn, uid: int, selected_day: date):
     schedules = conn.execute(
         "SELECT id, name, dose, frequency, start_date, created_at FROM medication_schedules"
-        " WHERE user_id=? AND active=1 ORDER BY name",
+        " WHERE user_id=? AND active=1 AND paused=0 ORDER BY name",
         (uid,),
     ).fetchall()
     dose_rows = conn.execute(
@@ -131,54 +126,6 @@ def _scheduled_day_rows(conn, uid: int, selected_day: date):
                 }
             )
     return rows
-
-
-def _adherence_7d(conn, schedule_id: int, user_id: int, start_date_str: str, frequency: str) -> dict:
-    dpd = _doses_per_day(frequency)
-    today_local = _today_local()
-    if dpd == 0:
-        taken = conn.execute(
-            "SELECT COUNT(*) FROM medication_doses WHERE schedule_id=? AND user_id=? AND status='taken'"
-            " AND scheduled_date >= ?",
-            (schedule_id, user_id, (today_local - timedelta(days=6)).isoformat()),
-        ).fetchone()[0]
-        return {"expected": None, "taken": taken, "pct": None}
-    window_start = max(today_local - timedelta(days=6), date.fromisoformat(start_date_str))
-    window_end = today_local
-    if window_start > window_end:
-        return {"expected": 0, "taken": 0, "pct": None}
-    days_in_window = (window_end - window_start).days + 1
-    expected = days_in_window * dpd
-    taken = conn.execute(
-        "SELECT COUNT(*) FROM medication_doses WHERE schedule_id=? AND user_id=? AND status='taken'"
-        " AND scheduled_date >= ? AND scheduled_date <= ?",
-        (schedule_id, user_id, window_start.isoformat(), window_end.isoformat()),
-    ).fetchone()[0]
-    pct = round(taken / expected * 100, 1) if expected > 0 else None
-    return {"expected": expected, "taken": taken, "pct": pct}
-
-
-def _adherence_badge(adh: dict) -> str:
-    if adh["expected"] is None:
-        n = adh["taken"]
-        word = "dose" if n == 1 else "doses"
-        return (
-            f'<span style="font-size:12px;background:#ede9fe;color:#7c3aed;border-radius:10px;'
-            f'padding:2px 8px;font-weight:700;">{n} {word} this week</span>'
-        )
-    if adh["expected"] == 0:
-        return '<span style="font-size:12px;color:#9ca3af;">No data yet</span>'
-    pct = adh["pct"] if adh["pct"] is not None else 0.0
-    if pct >= 80:
-        bg, fg = "#dcfce7", "#15803d"
-    elif pct >= 50:
-        bg, fg = "#fef9c3", "#92400e"
-    else:
-        bg, fg = "#fee2e2", "#b91c1c"
-    return (
-        f'<span style="font-size:12px;background:{bg};color:{fg};border-radius:10px;'
-        f'padding:2px 8px;font-weight:700;">{pct}% adherence (7d)</span>'
-    )
 
 
 def _meds_subnav(active_key: str) -> str:
@@ -935,7 +882,7 @@ def medications_today(d: str = "", w_end: str = ""):
 
 @router.get("/medications/schedules", response_class=HTMLResponse)
 def schedules_list():
-    from routers.medications import _MED_DATALIST
+    from routers.medications_utils import _MED_DATALIST
     today_str = _today_local().isoformat()
     freq_options = "".join(
         f'<option value="{k}">{html.escape(v)}</option>' for k, v in FREQ_LABELS.items()
@@ -961,6 +908,8 @@ def schedules_list():
     .sched-badge-mid {{ background:#fef9c3; color:#92400e; }}
     .sched-badge-low {{ background:#fee2e2; color:#b91c1c; }}
     .sched-badge-prn {{ background:#ede9fe; color:#7c3aed; }}
+    .sched-badge-paused {{ background:#f3f4f6; color:#6b7280; }}
+    .sched-card-paused {{ background:#f9fafb; border-color:#e5e7eb; opacity:.85; }}
     @media (max-width: 900px) {{
       .sched-shell {{ width:100%; }}
     }}
@@ -1082,17 +1031,23 @@ def schedules_list():
         emptyEl.style.display = "none";
         for (const s of items) {{
           const card = document.createElement("article");
-          card.className = "sched-card";
+          card.className = s.paused ? "sched-card sched-card-paused" : "sched-card";
           const doseHtml = s.dose ? `<div class="sched-dose">${{escapeHtml(s.dose)}}</div>` : "";
-          const badge = `<span class="${{badgeClass(s.adherence)}}">${{badgeText(s.adherence)}}</span>`;
+          const adherenceBadge = s.paused
+            ? `<span class="sched-badge sched-badge-paused">Paused</span>`
+            : `<span class="${{badgeClass(s.adherence)}}">${{badgeText(s.adherence)}}</span>`;
+          const pauseBtn = s.paused
+            ? `<button type="button" class="btn-edit" data-action="resume" data-id="${{s.id}}">Resume</button>`
+            : `<button type="button" class="btn-edit" data-action="pause" data-id="${{s.id}}">Pause</button>`;
           card.innerHTML = `
             <div class="sched-name">${{escapeHtml(s.name)}}</div>
             ${{doseHtml}}
             <div class="sched-meta">${{escapeHtml(s.frequency_label)}}</div>
-            ${{badge}}
+            ${{adherenceBadge}}
             <div class="sched-actions">
               <button type="button" class="btn-edit" data-action="edit" data-id="${{s.id}}">Edit</button>
-              <button type="button" class="btn-delete" data-action="deactivate" data-id="${{s.id}}">Deactivate</button>
+              ${{pauseBtn}}
+              <button type="button" class="btn-delete" data-action="delete" data-id="${{s.id}}">Delete</button>
             </div>
           `;
           listEl.appendChild(card);
@@ -1161,8 +1116,26 @@ def schedules_list():
           nameEl.focus();
           return;
         }}
-        if (action === "deactivate") {{
-          if (!window.confirm("Stop tracking this schedule?")) return;
+        if (action === "pause") {{
+          const res = await fetch(`/api/medications/schedules/${{id}}/pause`, {{
+            method: "POST",
+            headers: {{ "X-CSRF-Token": getCookie("csrf_token") }},
+          }});
+          if (!res.ok) return;
+          await loadSchedules();
+          return;
+        }}
+        if (action === "resume") {{
+          const res = await fetch(`/api/medications/schedules/${{id}}/resume`, {{
+            method: "POST",
+            headers: {{ "X-CSRF-Token": getCookie("csrf_token") }},
+          }});
+          if (!res.ok) return;
+          await loadSchedules();
+          return;
+        }}
+        if (action === "delete") {{
+          if (!window.confirm("Permanently delete this schedule? This cannot be undone.")) return;
           const res = await fetch(`/api/medications/schedules/${{id}}/deactivate`, {{
             method: "POST",
             headers: {{ "X-CSRF-Token": getCookie("csrf_token") }},
@@ -1194,6 +1167,7 @@ def _schedule_payload(conn, row, uid: int) -> dict:
         "frequency_label": FREQ_LABELS.get(s["frequency"], s["frequency"]),
         "start_date": s["start_date"],
         "adherence": adh,
+        "paused": bool(s.get("paused", 0)),
     }
 
 
@@ -1202,7 +1176,7 @@ def api_schedules_list():
     uid = _current_user_id.get()
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT id, name, dose, notes, frequency, start_date"
+            "SELECT id, name, dose, notes, frequency, start_date, paused"
             " FROM medication_schedules WHERE user_id=? AND active=1 ORDER BY name",
             (uid,),
         ).fetchall()
@@ -1297,9 +1271,33 @@ def api_schedules_deactivate(sched_id: int):
     return JSONResponse({"ok": True})
 
 
+@router.post("/api/medications/schedules/{sched_id}/pause")
+def api_schedules_pause(sched_id: int):
+    uid = _current_user_id.get()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE medication_schedules SET paused=1 WHERE id=? AND user_id=? AND active=1",
+            (sched_id, uid),
+        )
+        conn.commit()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/api/medications/schedules/{sched_id}/resume")
+def api_schedules_resume(sched_id: int):
+    uid = _current_user_id.get()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE medication_schedules SET paused=0 WHERE id=? AND user_id=? AND active=1",
+            (sched_id, uid),
+        )
+        conn.commit()
+    return JSONResponse({"ok": True})
+
+
 @router.get("/medications/schedules/new", response_class=HTMLResponse)
 def schedules_new(error: str = ""):
-    from routers.medications import _MED_DATALIST
+    from routers.medications_utils import _MED_DATALIST
     error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
     today_str = _today_local().isoformat()
     freq_options = "".join(
@@ -1380,7 +1378,7 @@ def schedules_create(
 
 @router.get("/medications/schedules/{sched_id}/edit", response_class=HTMLResponse)
 def schedules_edit_get(sched_id: int, error: str = ""):
-    from routers.medications import _MED_DATALIST
+    from routers.medications_utils import _MED_DATALIST
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute(

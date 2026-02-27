@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id, UPLOAD_DIR, MAX_PHOTO_SIZE
+from config import _current_user_id, UPLOAD_DIR, MAX_PHOTO_SIZE, FREQ_LABELS
 from db import get_db
 from security import _hash_password, _verify_password, _set_session_cookie
 from ui import PAGE_STYLE, _nav_bar, _calc_age
@@ -71,14 +71,6 @@ def api_profile_update(
     return JSONResponse({"status": "ok"})
 
 
-FREQ_LABELS = {
-    "once_daily":  "once daily",
-    "twice_daily": "twice daily",
-    "three_daily": "three times daily",
-    "prn":         "as needed (PRN)",
-}
-
-
 def _medications_from_schedules(conn, uid: int) -> str:
     schedules = conn.execute(
         "SELECT name, dose, frequency FROM medication_schedules"
@@ -88,7 +80,7 @@ def _medications_from_schedules(conn, uid: int) -> str:
     lines = []
     seen = set()
     for r in schedules:
-        freq = FREQ_LABELS.get(r["frequency"], r["frequency"])
+        freq = FREQ_LABELS.get(r["frequency"], r["frequency"]).lower()
         parts = [r["name"]]
         if r["dose"]:
             parts.append(r["dose"])

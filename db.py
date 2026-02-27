@@ -146,6 +146,8 @@ def init_db():
         sched_cols = [row[1] for row in conn.execute("PRAGMA table_info(medication_schedules)")]
         if "created_at" not in sched_cols:
             conn.execute("ALTER TABLE medication_schedules ADD COLUMN created_at TEXT NOT NULL DEFAULT ''")
+        if "paused" not in sched_cols:
+            conn.execute("ALTER TABLE medication_schedules ADD COLUMN paused INTEGER NOT NULL DEFAULT 0")
         # Backfill historical rows with a best-effort value when created_at is missing.
         conn.execute(
             "UPDATE medication_schedules SET created_at = start_date || ' 00:00:00'"
@@ -171,6 +173,16 @@ def init_db():
                 expires_at INTEGER NOT NULL
             )
         """)
+        # Indexes for common query patterns (all filtered by user_id)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_symptoms_user_id ON symptoms(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_medications_user_id ON medications(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_med_schedules_user_id ON medication_schedules(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_med_doses_user_id ON medication_doses(user_id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_med_doses_sched_date"
+            " ON medication_doses(schedule_id, scheduled_date)"
+        )
+
         # Generate share codes for any patient rows missing one
         for row in conn.execute("SELECT id FROM user_profile WHERE share_code = ''"):
             conn.execute(

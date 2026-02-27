@@ -1,5 +1,5 @@
 import html
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -10,6 +10,8 @@ from ui import PAGE_STYLE, _nav_bar, _sidebar, _severity_color
 
 router = APIRouter()
 SOFT_DELETE_RECOVERY_SECONDS = 20
+MAX_SYMPTOM_NAME_LEN = 200
+MAX_SYMPTOM_NOTES_LEN = 2000
 
 
 def _client_now_or_server() -> datetime:
@@ -25,6 +27,10 @@ def _validate_symptom_payload(
 ):
     if not name.strip():
         return ("Symptom name is required", None, None)
+    if len(name.strip()) > MAX_SYMPTOM_NAME_LEN:
+        return (f"Symptom name must be {MAX_SYMPTOM_NAME_LEN} characters or fewer", None, None)
+    if len(notes.strip()) > MAX_SYMPTOM_NOTES_LEN:
+        return (f"Notes must be {MAX_SYMPTOM_NOTES_LEN} characters or fewer", None, None)
     if not (1 <= severity <= 10):
         return ("Severity must be between 1 and 10", None, None)
     try:
@@ -434,7 +440,6 @@ def api_symptoms_soft_delete(sym_id: int):
 @router.post("/api/symptoms/{sym_id}/restore")
 def api_symptoms_restore(sym_id: int):
     uid = _current_user_id.get()
-    now_local = _client_now_or_server()
     with get_db() as conn:
         row = conn.execute(
             "SELECT deleted_at FROM symptoms WHERE id = ? AND user_id = ?",
@@ -445,8 +450,10 @@ def api_symptoms_restore(sym_id: int):
         deleted_at_raw = row["deleted_at"] or ""
         if not deleted_at_raw:
             return JSONResponse({"ok": False, "error": "Symptom is not deleted"}, status_code=400)
-        deleted_at_local = _from_utc_storage(deleted_at_raw)
-        if now_local - deleted_at_local > timedelta(seconds=SOFT_DELETE_RECOVERY_SECONDS):
+        # Compare directly in UTC to avoid DST-related skew
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        deleted_at_utc = datetime.strptime(deleted_at_raw, "%Y-%m-%d %H:%M:%S")
+        if now_utc - deleted_at_utc > timedelta(seconds=SOFT_DELETE_RECOVERY_SECONDS):
             return JSONResponse({"ok": False, "error": "Undo window expired"}, status_code=400)
         conn.execute(
             "UPDATE symptoms SET deleted_at = '' WHERE id = ? AND user_id = ?",

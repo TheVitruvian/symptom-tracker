@@ -134,6 +134,25 @@
     });
   }
 
+  function injectCsrfIntoForms() {
+    var token = getCookie("csrf_token");
+    if (!token) return;
+    document.querySelectorAll('form[method="post"], form[method="POST"]').forEach(function (f) {
+      var action = f.getAttribute("action") || "";
+      if (action.indexOf("_csrf=") !== -1) return;
+      f.setAttribute(
+        "action",
+        action + (action.indexOf("?") === -1 ? "?" : "&") + "_csrf=" + encodeURIComponent(token)
+      );
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", injectCsrfIntoForms);
+  } else {
+    injectCsrfIntoForms();
+  }
+
   window._navToggle = navToggle;
   window._clientNowLocal = clientNowLocal;
   window._applyClientTimeDefaults = applyClientTimeDefaults;

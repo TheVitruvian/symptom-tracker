@@ -2,7 +2,7 @@ import html
 import re
 from datetime import datetime
 
-from config import _current_user_id, _physician_ctx, CSRF_COOKIE_NAME
+from config import _current_user_id, _physician_ctx, CSRF_COOKIE_NAME, FREQ_LABELS
 from db import get_db
 
 
@@ -24,14 +24,6 @@ def _calc_age(dob_str: str):
         return None
 
 
-_SIDEBAR_FREQ = {
-    "once_daily":  "once daily",
-    "twice_daily": "twice daily",
-    "three_daily": "three times daily",
-    "prn":         "as needed (PRN)",
-}
-
-
 def _sidebar_meds(conn, uid: int) -> list:
     """Return list of dicts: name, dose, freq (or None), href."""
     schedules = conn.execute(
@@ -40,7 +32,7 @@ def _sidebar_meds(conn, uid: int) -> list:
     ).fetchall()
     seen, items = set(), []
     for r in schedules:
-        freq = _SIDEBAR_FREQ.get(r["frequency"], r["frequency"])
+        freq = FREQ_LABELS.get(r["frequency"], r["frequency"]).lower()
         items.append({"name": r["name"], "dose": r["dose"] or "", "freq": freq, "href": "/medications/schedules"})
         seen.add(r["name"].lower())
     for r in conn.execute(

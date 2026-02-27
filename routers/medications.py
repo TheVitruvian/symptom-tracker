@@ -1,31 +1,17 @@
 import html
-from urllib.parse import quote_plus
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from typing import Optional, Tuple
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id, _from_utc_storage, _now_local
+from config import _current_user_id, _from_utc_storage, _now_local, FREQ_LABELS
 from db import get_db
+from routers.medications_utils import _MED_DATALIST, _adherence_7d, _adherence_badge
 from ui import PAGE_STYLE, _nav_bar
 
 router = APIRouter()
-
-MEDICATION_SUGGESTIONS = [
-    "Acetaminophen (Tylenol)", "Ibuprofen (Advil/Motrin)", "Aspirin",
-    "Naproxen (Aleve)", "Metformin", "Lisinopril", "Atorvastatin",
-    "Levothyroxine", "Amlodipine", "Omeprazole", "Metoprolol",
-    "Losartan", "Albuterol", "Gabapentin", "Sertraline (Zoloft)",
-    "Escitalopram (Lexapro)", "Fluoxetine (Prozac)", "Amoxicillin",
-    "Azithromycin", "Prednisone", "Cetirizine (Zyrtec)",
-    "Loratadine (Claritin)", "Montelukast (Singulair)",
-    "Bupropion (Wellbutrin)", "Duloxetine (Cymbalta)",
-    "Pantoprazole", "Furosemide", "Hydrochlorothiazide",
-    "Clonazepam", "Alprazolam (Xanax)", "Zolpidem (Ambien)",
-    "Melatonin", "Vitamin D", "Fish Oil", "Magnesium",
-]
-_MED_DATALIST = "".join(f'<option value="{html.escape(med)}">' for med in MEDICATION_SUGGESTIONS)
 
 MAX_MED_NAME_LEN = 120
 MAX_DOSE_LEN = 80
@@ -131,19 +117,26 @@ def medications_list():
         rows = sorted([dict(r) for r in taken_rows] + [dict(r) for r in missed_rows], key=lambda r: r["timestamp"], reverse=True)
         # Schedules summary for top section
         schedules = conn.execute(
-            "SELECT id, name, dose, frequency, start_date FROM medication_schedules"
+            "SELECT id, name, dose, frequency, start_date, paused FROM medication_schedules"
             " WHERE user_id=? AND active=1 ORDER BY name",
             (uid,),
         ).fetchall()
-        from routers.medications_adherence import _adherence_7d, _adherence_badge, FREQ_LABELS
         sched_cards = ""
         for s in schedules:
-            adh = _adherence_7d(conn, s["id"], uid, s["start_date"], s["frequency"])
-            badge = _adherence_badge(adh)
+            is_paused = bool(s["paused"])
+            if is_paused:
+                badge = '<span style="font-size:12px;background:#f3f4f6;color:#6b7280;border-radius:10px;padding:2px 8px;font-weight:700;">Paused</span>'
+            else:
+                adh = _adherence_7d(conn, s["id"], uid, s["start_date"], s["frequency"])
+                badge = _adherence_badge(adh)
             freq_label = FREQ_LABELS.get(s["frequency"], s["frequency"])
+            row_style = (
+                "display:flex;align-items:center;justify-content:space-between;"
+                "flex-wrap:wrap;gap:6px;padding:10px 0;border-bottom:1px solid #f3f4f6;"
+                + ("opacity:.5;" if is_paused else "")
+            )
             sched_cards += (
-                f'<div style="display:flex;align-items:center;justify-content:space-between;'
-                f'flex-wrap:wrap;gap:6px;padding:10px 0;border-bottom:1px solid #f3f4f6;">'
+                f'<div style="{row_style}">'
                 f'<div>'
                 f'<span style="font-weight:700;font-size:14px;">{html.escape(s["name"])}</span>'
                 + (f' <span style="font-size:12px;color:#7c3aed;font-weight:600;">{html.escape(s["dose"])}</span>' if s["dose"] else "")

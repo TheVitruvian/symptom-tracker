@@ -46,7 +46,10 @@ def api_med_symptom_correlations(from_date: str = "", to_date: str = ""):
             (uid,),
         ).fetchall()
         med_rows = conn.execute(
-            "SELECT name, timestamp FROM medications WHERE user_id = ?",
+            "SELECT ms.name, md.taken_at AS timestamp"
+            " FROM medication_doses md"
+            " JOIN medication_schedules ms ON ms.id = md.schedule_id AND ms.user_id = md.user_id"
+            " WHERE md.user_id = ? AND md.status = 'taken' AND md.taken_at != ''",
             (uid,),
         ).fetchall()
     for r in symp_rows:
@@ -1752,7 +1755,6 @@ def symptoms_calendar():
           <div class="med-dose-meta">PRN</div>
           <div class="med-dose-status med-dose-status-pending">Logged: ${r.logged_count || 0}</div>
           <div class="med-dose-actions">
-            <input type="date" class="med-dose-date" id="med-date-prn-${r.schedule_id}" value="${dateStr}">
             <input type="time" class="med-dose-time" id="med-time-prn-${r.schedule_id}">
             <button type="button" class="med-dose-btn"
               onclick="takeDoseWithTime(${r.schedule_id}, ${nextDoseNum}, '${dateStr}', true)">Take with time</button>

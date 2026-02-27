@@ -14,6 +14,8 @@ from security import (
     _has_any_patient,
     _get_authenticated_user,
     _send_reset_email,
+    _is_login_allowed,
+    _is_reset_allowed,
 )
 from ui import PAGE_STYLE
 
@@ -143,6 +145,9 @@ def login_get(request: Request, error: str = "", success: str = ""):
 
 @router.post("/login")
 def login_post(request: Request, username: str = Form(""), password: str = Form("")):
+    ip = request.client.host if request.client else "unknown"
+    if not _is_login_allowed(ip):
+        return RedirectResponse(url="/login?error=Too+many+attempts.+Please+wait+before+trying+again.", status_code=303)
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM user_profile WHERE username = ?", (username.strip(),)
@@ -204,6 +209,9 @@ def forgot_password_get(sent: int = 0, error: str = ""):
 
 @router.post("/forgot-password")
 def forgot_password_post(request: Request, email: str = Form("")):
+    ip = request.client.host if request.client else "unknown"
+    if not _is_reset_allowed(ip):
+        return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
     email = email.strip().lower()
     if email:
         with get_db() as conn:
@@ -224,12 +232,8 @@ def forgot_password_post(request: Request, email: str = Form("")):
                 conn.commit()
             base = str(request.base_url).rstrip("/")
             reset_url = f"{base}/reset-password?token={token}"
-            sent_ok = _send_reset_email(email, reset_url)
-            if not sent_ok:
-                return RedirectResponse(
-                    url="/forgot-password?error=Unable+to+send+reset+email.+Please+try+again",
-                    status_code=303,
-                )
+            _send_reset_email(email, reset_url)
+    # Always show the same message regardless of outcome to prevent email enumeration
     return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
 
 
