@@ -90,6 +90,17 @@ def _scheduled_day_rows(conn, uid: int, selected_day: date):
         dpd = _doses_per_day(sched["frequency"])
         if dpd == 0:
             prn_taken = [r for r in dose_rows if r["schedule_id"] == sid and r["status"] == "taken"]
+            prn_entries = []
+            for r in sorted(prn_taken, key=lambda x: x["dose_num"], reverse=True):
+                taken_at = ""
+                if r["taken_at"]:
+                    taken_at = _from_utc_storage(r["taken_at"]).strftime("%Y-%m-%d %H:%M:%S")
+                prn_entries.append(
+                    {
+                        "dose_num": r["dose_num"],
+                        "taken_at": taken_at,
+                    }
+                )
             rows.append(
                 {
                     "kind": "prn",
@@ -97,6 +108,7 @@ def _scheduled_day_rows(conn, uid: int, selected_day: date):
                     "name": sched["name"],
                     "dose": sched["dose"] or "",
                     "logged_count": len(prn_taken),
+                    "entries": prn_entries,
                 }
             )
             continue
@@ -297,17 +309,21 @@ def medications_today(d: str = "", w_end: str = ""):
             prn_count = len(prn_taken)
             prn_logs += prn_count
             prn_word = "dose" if prn_count == 1 else "doses"
-            prn_undo_html = ""
+            prn_delete_html = ""
             if prn_count > 0:
-                prn_undo_html = f"""
-                  <form method="post" action="/medications/doses/undo" class="dose-action-form" style="margin:0;">
+                options = "".join(
+                    f'<option value="{r["dose_num"]}">#{r["dose_num"]} ({r["taken_at"][11:16] if r["taken_at"] else "--:--"})</option>'
+                    for r in sorted(prn_taken, key=lambda x: x["dose_num"], reverse=True)
+                )
+                prn_delete_html = f"""
+                  <form method="post" action="/medications/doses/undo" class="dose-time-form dose-action-form">
                     <input type="hidden" name="schedule_id" value="{sid}">
                     <input type="hidden" name="scheduled_date" value="{day_str}">
-                    <input type="hidden" name="dose_num" value="{prn_count}">
                     <input type="hidden" name="redirect_to" value="{redirect_to}">
-                    <button type="submit" class="dose-btn dose-btn-secondary dose-btn-x" aria-label="Undo last PRN entry" title="Undo">
-                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6L18 18M18 6L6 18"/></svg>
-                    </button>
+                    <select name="dose_num" class="dose-time dose-time-input" aria-label="Select PRN entry to delete" style="width:132px;">
+                      {options}
+                    </select>
+                    <button type="submit" class="dose-btn dose-btn-warn">Delete selected</button>
                   </form>"""
             prn_rows += f"""
             <article class="med-row">
@@ -335,7 +351,7 @@ def medications_today(d: str = "", w_end: str = ""):
                       <input type="time" name="taken_time" data-date="{day_str}" class="dose-time dose-time-input">
                       <button type="submit" class="dose-btn dose-btn-secondary">Log with time</button>
                     </form>
-                    {prn_undo_html}
+                    {prn_delete_html}
                   </div>
                 </details>
               </div>
@@ -542,19 +558,23 @@ def medications_today(d: str = "", w_end: str = ""):
         {next_week_html}
       </div>
       <div class="kpi-grid">
-        <div class="kpi-card"><div class="kpi-label">Scheduled</div><div class="kpi-value">{scheduled_expected}</div></div>
-        <div class="kpi-card"><div class="kpi-label">Taken</div><div class="kpi-value">{scheduled_taken}</div></div>
-        <div class="kpi-card"><div class="kpi-label">Pending</div><div class="kpi-value">{scheduled_pending}</div></div>
-        <div class="kpi-card"><div class="kpi-label">PRN Logs</div><div class="kpi-value">{prn_logs}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Scheduled</div><div id="kpi-scheduled" class="kpi-value">{scheduled_expected}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Taken</div><div id="kpi-taken" class="kpi-value">{scheduled_taken}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Pending</div><div id="kpi-pending" class="kpi-value">{scheduled_pending}</div></div>
+        <div class="kpi-card"><div class="kpi-label">PRN Logs</div><div id="kpi-prn" class="kpi-value">{prn_logs}</div></div>
       </div>
       <div class="sections-grid">
         <section class="panel">
           <h2>Scheduled Doses</h2>
-          {slot_sections}
+          <div id="scheduled-doses-wrap">
+            <p class="empty">Loading scheduled doses...</p>
+          </div>
         </section>
         <section class="panel">
           <h2>PRN Medications</h2>
-          {prn_rows}
+          <div id="prn-doses-wrap">
+            <p class="empty">Loading PRN medications...</p>
+          </div>
         </section>
       </div>
     </div>
@@ -581,6 +601,196 @@ def medications_today(d: str = "", w_end: str = ""):
           if (!el.value) el.value = nowTime;
           if (d === today) el.max = nowTime;
         }});
+      }}
+
+      function escHtml(v) {{
+        return String(v)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }}
+
+      function fmtTimeFromTs(ts) {{
+        return ts ? String(ts).slice(11, 16) : "";
+      }}
+
+      function selectedDayFromUrl() {{
+        const p = new URLSearchParams(window.location.search || "");
+        return p.get("d") || clientLocalDateISO();
+      }}
+
+      async function apiDoseAction(path, payload) {{
+        const csrf = window._getCookie ? window._getCookie("csrf_token") : "";
+        const res = await fetch(path, {{
+          method: "POST",
+          headers: {{
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrf,
+          }},
+          body: JSON.stringify(payload),
+        }});
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error((data && data.error) || "Dose update failed");
+      }}
+
+      function scheduledDoseRowHtml(r, dayStr) {{
+        const doseHtml = r.dose ? ` <span class="med-dose">${{escHtml(r.dose)}}</span>` : "";
+        const title = `<div class="med-title">${{escHtml(r.name)}}${{doseHtml}}</div>`;
+        const meta = `<div class="med-meta">${{escHtml(r.slot_label || "")}}</div>`;
+        if (r.status === "taken") {{
+          const t = fmtTimeFromTs(r.taken_at);
+          return `
+            <article class="med-row">
+              <div class="med-main">${{title}}${{meta}}</div>
+              <div class="dose-actions">
+                <div class="status-row">
+                  <div class="dose-chip dose-chip-taken">&#10003; Taken${{t ? ` at ${{t}}` : ""}}</div>
+                </div>
+                <div class="primary-actions-row">
+                  <div style="margin:0;flex:1;">
+                    <input type="time" class="dose-time dose-time-input" id="dose-time-${{r.schedule_id}}-${{r.dose_num}}" value="${{t}}">
+                  </div>
+                  <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-time"
+                    data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Update time</button>
+                </div>
+                <button type="button" class="dose-btn dose-btn-warn" data-dose-action="miss"
+                  data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Change to missed</button>
+              </div>
+            </article>`;
+        }}
+        if (r.status === "missed") {{
+          return `
+            <article class="med-row">
+              <div class="med-main">${{title}}${{meta}}</div>
+              <div class="dose-actions">
+                <div class="status-row">
+                  <div class="dose-chip dose-chip-missed">&#10007; Missed</div>
+                </div>
+                <div class="primary-actions-row">
+                  <button type="button" class="dose-btn dose-btn-muted" data-dose-action="take-now"
+                    data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Change to taken</button>
+                </div>
+                <div class="primary-actions-row">
+                  <input type="time" class="dose-time dose-time-input" id="dose-time-${{r.schedule_id}}-${{r.dose_num}}" data-date="${{dayStr}}">
+                  <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-time"
+                    data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Take with time</button>
+                </div>
+              </div>
+            </article>`;
+        }}
+        return `
+          <article class="med-row">
+            <div class="med-main">${{title}}${{meta}}</div>
+            <div class="dose-actions">
+              <div class="primary-actions-row">
+                <button type="button" class="dose-btn dose-btn-muted" data-dose-action="take-now"
+                  data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Take now</button>
+                <button type="button" class="dose-btn dose-btn-warn" data-dose-action="miss"
+                  data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Mark missed</button>
+              </div>
+              <div class="primary-actions-row">
+                <input type="time" class="dose-time dose-time-input" id="dose-time-${{r.schedule_id}}-${{r.dose_num}}" data-date="${{dayStr}}">
+                <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-time"
+                  data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Take with time</button>
+              </div>
+            </div>
+          </article>`;
+      }}
+
+      function prnRowHtml(r, dayStr) {{
+        const doseHtml = r.dose ? ` <span class="med-dose">${{escHtml(r.dose)}}</span>` : "";
+        const entries = Array.isArray(r.entries) ? r.entries : [];
+        const options = entries.map((e) => {{
+          const t = fmtTimeFromTs(e.taken_at) || "--:--";
+          return `<option value="${{e.dose_num}}">#${{e.dose_num}} (${{t}})</option>`;
+        }}).join("");
+        return `
+          <article class="med-row">
+            <div class="med-main">
+              <div class="med-title">${{escHtml(r.name)}}${{doseHtml}}</div>
+              <div class="med-meta">PRN</div>
+              <div class="dose-chip dose-chip-neutral">Logged: ${{r.logged_count || 0}} ${{(r.logged_count || 0) === 1 ? "dose" : "doses"}}</div>
+            </div>
+            <div class="dose-actions">
+              <div class="primary-actions-row">
+                <button type="button" class="dose-btn dose-btn-primary" data-dose-action="take-now-prn"
+                  data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{Number(r.logged_count || 0) + 1}}">+ Log now</button>
+              </div>
+              <details class="dose-more">
+                <summary>More options</summary>
+                <div class="dose-more-actions">
+                  <div class="dose-time-form">
+                    <input type="time" class="dose-time dose-time-input" id="prn-time-${{r.schedule_id}}" data-date="${{dayStr}}">
+                    <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-time-prn"
+                      data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{Number(r.logged_count || 0) + 1}}">Log with time</button>
+                  </div>
+                  ${{entries.length ? `
+                  <div class="dose-time-form">
+                    <select id="prn-del-${{r.schedule_id}}" class="dose-time dose-time-input" style="width:132px;" aria-label="Select PRN entry to delete">
+                      ${{options}}
+                    </select>
+                    <button type="button" class="dose-btn dose-btn-warn" data-dose-action="delete-prn"
+                      data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}">Delete selected</button>
+                  </div>` : ""}}
+                </div>
+              </details>
+            </div>
+          </article>`;
+      }}
+
+      function renderDayFromApi(data, dayStr) {{
+        const rows = data.rows || [];
+        const scheduled = rows.filter((r) => r.kind === "scheduled");
+        const prn = rows.filter((r) => r.kind === "prn");
+
+        const scheduledExpected = scheduled.length;
+        const scheduledTaken = scheduled.filter((r) => r.status === "taken").length;
+        const scheduledPending = scheduled.filter((r) => r.status === "pending").length;
+        const prnLogs = prn.reduce((sum, r) => sum + Number(r.logged_count || 0), 0);
+        const kpiScheduled = document.getElementById("kpi-scheduled");
+        const kpiTaken = document.getElementById("kpi-taken");
+        const kpiPending = document.getElementById("kpi-pending");
+        const kpiPrn = document.getElementById("kpi-prn");
+        if (kpiScheduled) kpiScheduled.textContent = String(scheduledExpected);
+        if (kpiTaken) kpiTaken.textContent = String(scheduledTaken);
+        if (kpiPending) kpiPending.textContent = String(scheduledPending);
+        if (kpiPrn) kpiPrn.textContent = String(prnLogs);
+
+        const slotOrder = ["Daily", "Morning", "Afternoon", "Evening"];
+        const slotMap = new Map(slotOrder.map((s) => [s, []]));
+        scheduled.forEach((r) => {{
+          const label = String(r.slot_label || "");
+          const slot = label.startsWith("Morning") ? "Morning"
+            : label.startsWith("Afternoon") ? "Afternoon"
+            : label.startsWith("Evening") ? "Evening"
+            : "Daily";
+          slotMap.get(slot).push(r);
+        }});
+        let schedHtml = "";
+        slotOrder.forEach((slot) => {{
+          const rowsForSlot = slotMap.get(slot) || [];
+          if (!rowsForSlot.length) return;
+          schedHtml += `<section class="timeline-slot"><h3>${{slot}}</h3>${{rowsForSlot.map((r) => scheduledDoseRowHtml(r, dayStr)).join("")}}</section>`;
+        }});
+        if (!schedHtml) schedHtml = '<p class="empty">No scheduled doses for this day.</p>';
+        const schedWrap = document.getElementById("scheduled-doses-wrap");
+        if (schedWrap) schedWrap.innerHTML = schedHtml;
+
+        let prnHtml = prn.map((r) => prnRowHtml(r, dayStr)).join("");
+        if (!prnHtml) prnHtml = '<p class="empty">No PRN medications configured.</p>';
+        const prnWrap = document.getElementById("prn-doses-wrap");
+        if (prnWrap) prnWrap.innerHTML = prnHtml;
+
+        initDoseTimeInputs(document);
+      }}
+
+      async function loadDayFromApi(dayStr) {{
+        const res = await fetch(`/api/medications/day?d=${{encodeURIComponent(dayStr)}}`, {{ cache: "no-store" }});
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error((data && data.error) || "Could not load day");
+        renderDayFromApi(data, dayStr);
       }}
 
       async function refreshTodayShell(url, pushState) {{
@@ -623,33 +833,56 @@ def medications_today(d: str = "", w_end: str = ""):
         }});
       }}
 
-      document.addEventListener("submit", async (e) => {{
-        const form = e.target;
-        if (!(form instanceof HTMLFormElement)) return;
-        if (!form.classList.contains("dose-action-form")) return;
-        e.preventDefault();
-        const actionUrl = form.action || "";
-        const submitBtn = form.querySelector('button[type="submit"]');
-        if (submitBtn) submitBtn.disabled = true;
+      document.addEventListener("click", async (e) => {{
+        const btn = e.target.closest("[data-dose-action]");
+        if (!btn) return;
+        const action = btn.getAttribute("data-dose-action") || "";
+        const scheduleId = Number(btn.getAttribute("data-schedule-id") || "0");
+        const doseNum = Number(btn.getAttribute("data-dose-num") || "0");
+        const dateStr = btn.getAttribute("data-date") || selectedDayFromUrl();
         try {{
-          const fd = new FormData(form);
-          const res = await fetch(form.action, {{
-            method: "POST",
-            body: fd,
-            headers: {{ "X-Requested-With": "fetch" }},
-          }});
-          if (!res.ok) throw new Error("action failed");
-          await refreshTodayShell("", false);
-          if (window._showToast) {{
-            if (actionUrl.includes("/doses/miss")) window._showToast("Dose marked missed", "info");
-            else if (actionUrl.includes("/doses/undo")) window._showToast("Dose entry undone", "info");
-            else window._showToast("Dose saved", "success");
+          if (action === "take-now") {{
+            await apiDoseAction("/api/medications/doses/take", {{
+              schedule_id: scheduleId, dose_num: doseNum, scheduled_date: dateStr, taken_time: "",
+            }});
+            if (window._showToast) window._showToast("Dose saved", "success");
+          }} else if (action === "miss") {{
+            await apiDoseAction("/api/medications/doses/miss", {{
+              schedule_id: scheduleId, dose_num: doseNum, scheduled_date: dateStr,
+            }});
+            if (window._showToast) window._showToast("Dose marked missed", "info");
+          }} else if (action === "take-time") {{
+            const t = (document.getElementById(`dose-time-${{scheduleId}}-${{doseNum}}`)?.value || "").trim();
+            await apiDoseAction("/api/medications/doses/take", {{
+              schedule_id: scheduleId, dose_num: doseNum, scheduled_date: dateStr, taken_time: t,
+            }});
+            if (window._showToast) window._showToast("Dose saved", "success");
+          }} else if (action === "take-now-prn") {{
+            const nextDose = Number(btn.getAttribute("data-next-dose") || "0");
+            await apiDoseAction("/api/medications/doses/take", {{
+              schedule_id: scheduleId, dose_num: nextDose, scheduled_date: dateStr, taken_time: "",
+            }});
+            if (window._showToast) window._showToast("Dose saved", "success");
+          }} else if (action === "take-time-prn") {{
+            const nextDose = Number(btn.getAttribute("data-next-dose") || "0");
+            const t = (document.getElementById(`prn-time-${{scheduleId}}`)?.value || "").trim();
+            await apiDoseAction("/api/medications/doses/take", {{
+              schedule_id: scheduleId, dose_num: nextDose, scheduled_date: dateStr, taken_time: t,
+            }});
+            if (window._showToast) window._showToast("Dose saved", "success");
+          }} else if (action === "delete-prn") {{
+            const delDose = Number((document.getElementById(`prn-del-${{scheduleId}}`)?.value || "").trim());
+            if (!delDose) throw new Error("Select a PRN entry to delete");
+            await apiDoseAction("/api/medications/doses/undo", {{
+              schedule_id: scheduleId, dose_num: delDose, scheduled_date: dateStr,
+            }});
+            if (window._showToast) window._showToast("PRN entry deleted", "info");
+          }} else {{
+            return;
           }}
-        }} catch (_) {{
-          if (window._showToast) window._showToast("Could not save dose action", "error");
-          window.location.href = window.location.pathname + window.location.search;
-        }} finally {{
-          if (submitBtn) submitBtn.disabled = false;
+          await loadDayFromApi(dateStr);
+        }} catch (err) {{
+          if (window._showToast) window._showToast(err.message || "Could not save dose action", "error");
         }}
       }});
 
@@ -690,6 +923,7 @@ def medications_today(d: str = "", w_end: str = ""):
 
       initDoseTimeInputs(document);
       ensureClientDateDefaults().catch(() => {{}});
+      loadDayFromApi(selectedDayFromUrl()).catch(() => {{}});
     }})();
   </script>
 </body>
@@ -1509,6 +1743,42 @@ def api_doses_miss(payload: dict = Body(...)):
         conn.execute(
             "INSERT INTO medication_doses (schedule_id, user_id, scheduled_date, dose_num, taken_at, status)"
             " VALUES (?,?,?,?,'','missed')",
+            (schedule_id, uid, scheduled_day.isoformat(), dose_num),
+        )
+        conn.commit()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/api/medications/doses/undo")
+def api_doses_undo(payload: dict = Body(...)):
+    uid = _current_user_id.get()
+    try:
+        schedule_id = int(payload.get("schedule_id", 0))
+        dose_num = int(payload.get("dose_num", 0))
+    except (TypeError, ValueError):
+        return JSONResponse({"ok": False, "error": "Invalid dose payload"}, status_code=400)
+    d = str(payload.get("scheduled_date", ""))
+    scheduled_day = _parse_valid_scheduled_date(d, _client_today_or_server())
+    if scheduled_day is None or dose_num < 1:
+        return JSONResponse({"ok": False, "error": "Invalid date or dose"}, status_code=400)
+    with get_db() as conn:
+        sched = conn.execute(
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
+            (schedule_id, uid),
+        ).fetchone()
+        if not sched:
+            return JSONResponse({"ok": False, "error": "Schedule not found"}, status_code=404)
+        sched_start = date.fromisoformat(sched["start_date"])
+        if scheduled_day < sched_start:
+            return JSONResponse({"ok": False, "error": "Date before schedule start"}, status_code=400)
+        created_at = _parse_created_at(sched["created_at"])
+        if created_at and scheduled_day < created_at.date():
+            return JSONResponse({"ok": False, "error": "Date before schedule created"}, status_code=400)
+        dpd = _doses_per_day(sched["frequency"])
+        if dpd > 0 and dose_num > dpd:
+            return JSONResponse({"ok": False, "error": "Invalid dose slot"}, status_code=400)
+        conn.execute(
+            "DELETE FROM medication_doses WHERE schedule_id=? AND user_id=? AND scheduled_date=? AND dose_num=?",
             (schedule_id, uid, scheduled_day.isoformat(), dose_num),
         )
         conn.commit()

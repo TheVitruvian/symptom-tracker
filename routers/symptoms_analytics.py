@@ -275,7 +275,7 @@ def symptoms_chart():
       <canvas id="symptomChart"></canvas>
     </div>
     <div id="med-tooltip" style="display:none; position:fixed; background:#1e3a8a; color:#fff;
-      padding:6px 10px; border-radius:6px; font-size:13px; pointer-events:none; z-index:100;
+      padding:6px 10px; border-radius:6px; font-size:13px; pointer-events:none; z-index:140;
       white-space:nowrap; box-shadow:0 2px 8px rgba(0,0,0,0.2); line-height:1.5;"></div>
     <div id="control-tooltip" style="display:none; position:fixed; background:#111827; color:#fff;
       padding:8px 10px; border-radius:8px; font-size:12px; pointer-events:none; z-index:120;
@@ -423,6 +423,13 @@ def symptoms_chart():
       return d.toISOString().slice(0, 10);
     }}
 
+    function clientTodayISO() {{
+      if (window.__clientDateLocal) return window.__clientDateLocal;
+      const now = new Date();
+      const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+      return local.toISOString().slice(0, 10);
+    }}
+
     function bucketKey(dateStr) {{
       if (_timeBucket !== "weekly") return dateStr;
       const d = new Date(dateStr + "T00:00:00Z");
@@ -498,10 +505,9 @@ def symptoms_chart():
         ..._allMeds.map(m => m.timestamp.slice(0, 10)),
       ].sort();
       if (dates.length) {{
-        const latest = new Date(dates[dates.length - 1] + "T00:00:00");
-        const from30 = new Date(+latest - 29 * 86400000);
-        document.getElementById("range-from").value = from30.toISOString().slice(0, 10);
-        document.getElementById("range-to").value = dates[dates.length - 1];
+        const latest = dates[dates.length - 1];
+        document.getElementById("range-from").value = addDays(latest, -29);
+        document.getElementById("range-to").value = latest;
         _chartPreset = "30d";
         _patternsPreset = "30d";
       }}
@@ -512,10 +518,10 @@ def symptoms_chart():
     }}
 
     function setPreset(days) {{
-      const to = new Date();
-      const from = new Date(+to - days * 86400000);
-      document.getElementById("range-from").value = from.toISOString().slice(0, 10);
-      document.getElementById("range-to").value = to.toISOString().slice(0, 10);
+      const to = clientTodayISO();
+      const from = addDays(to, -(days - 1));
+      document.getElementById("range-from").value = from;
+      document.getElementById("range-to").value = to;
       _chartPreset = `${{days}}d`;
       syncChartPresetButtons();
       render();
@@ -811,7 +817,22 @@ def symptoms_chart():
         return;
       }}
 
+      function enumerateDays(fromDate, toDate) {{
+        const out = [];
+        if (!fromDate || !toDate) return out;
+        const start = new Date(fromDate + "T00:00:00Z");
+        const end = new Date(toDate + "T00:00:00Z");
+        if (start > end) return out;
+        for (let d = new Date(start); d <= end; d = new Date(d.getTime() + 86400000)) {{
+          out.push(d.toISOString().slice(0, 10));
+        }}
+        return out;
+      }}
+
+      const from = document.getElementById("range-from").value || "";
+      const to = document.getElementById("range-to").value || "";
       const allBuckets = new Set();
+      enumerateDays(from, to).forEach((d) => allBuckets.add(bucketKey(d)));
       symptoms.forEach(s => expandSymptomDates(s).forEach(date => allBuckets.add(bucketKey(date))));
       medications.forEach(m => allBuckets.add(bucketKey(m.timestamp.slice(0, 10))));
       const bucketKeys = [...allBuckets].sort();
@@ -864,26 +885,45 @@ def symptoms_chart():
       // Medication annotations (replaces scatter lane)
       const medAnnotations = {{}};
       const medMeta = []; // {{ name, color, annotationIds }}
+      const bucketIndex = new Map(bucketKeys.map((k, i) => [k, i]));
       for (const [name, meds] of [...medGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {{
         const color = MED_PALETTE[stableIndex(name, MED_PALETTE.length)];
         const ids = [];
         const isPrn = _adherenceData[name] && _adherenceData[name].frequency === "prn";
-        meds.forEach((m, j) => {{
-          const id = `med_${{j}}_${{name}}`;
-          ids.push(id);
+        const byBucket = new Map();
+        meds.forEach((m) => {{
           const bKey = bucketKey(m.timestamp.slice(0, 10));
-          const hoverNote = (isPrn && (m.notes || "") === "Scheduled dose taken") ? "" : (m.notes || "");
-          medAnnotations[id] = {{
-            type: "line",
-            scaleID: "x",
-            value: labelByKey.get(bKey),
-            borderColor: color,
-            borderWidth: 1.5,
-            borderDash: [5, 4],
-            display: false,
-            enter(ctx, event) {{ showMedTooltip(event.native, name, m.dose, m.timestamp.slice(11, 16), hoverNote); }},
-            leave() {{ hideMedTooltip(); }},
-          }};
+          if (!byBucket.has(bKey)) byBucket.set(bKey, []);
+          byBucket.get(bKey).push(m);
+        }});
+        [...byBucket.entries()].sort((a, b) => a[0].localeCompare(b[0])).forEach(([bKey, bucketMeds]) => {{
+          const baseIndex = bucketIndex.get(bKey);
+          if (baseIndex === undefined) return;
+          const missCount = bucketMeds.length;
+          bucketMeds.forEach((m, j) => {{
+            const id = `med_${{baseIndex}}_${{j}}_${{name}}`;
+            ids.push(id);
+            const offset = missCount === 1 ? 0 : ((j - (missCount - 1) / 2) * 0.2);
+            const xPos = baseIndex + offset;
+            const hoverNote = missCount > 1
+              ? `Medication missed (${{j + 1}} of ${{missCount}} this day)`
+              : ((isPrn && (m.notes || "") === "Scheduled dose taken") ? "" : (m.notes || ""));
+            medAnnotations[id] = {{
+              type: "line",
+              xScaleID: "x",
+              yScaleID: "y",
+              xMin: xPos,
+              xMax: xPos,
+              yMin: 1,
+              yMax: 10,
+              borderColor: color,
+              borderWidth: 1.5,
+              borderDash: [5, 4],
+              display: false,
+              enter(ctx, event) {{ showMedTooltip(event.native, name, m.dose, m.timestamp.slice(11, 16), hoverNote); }},
+              leave() {{ hideMedTooltip(); }},
+            }};
+          }});
         }});
         medMeta.push({{ name, color, annotationIds: ids }});
       }}
@@ -1339,6 +1379,16 @@ def symptoms_calendar():
       height:30px; min-height:30px; width:118px; box-sizing:border-box; line-height:1;
       background:#fff; color:#374151;
     }
+    .med-dose-date {
+      border:1px solid #d1d5db; border-radius:7px; padding:0 9px; font-size:12px; font-family:inherit;
+      height:30px; min-height:30px; width:142px; box-sizing:border-box; line-height:1;
+      background:#fff; color:#374151;
+    }
+    .med-dose-date:focus {
+      outline:none; border-color:#9ca3af; box-shadow:none;
+      background:#fff;
+    }
+    .med-dose-date::-webkit-calendar-picker-indicator { cursor:pointer; opacity:.75; }
     .detail-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
       padding: 12px 14px; margin-bottom: 10px; }
     .detail-header { display: flex; align-items: center; gap: 10px; }
@@ -1472,6 +1522,10 @@ def symptoms_calendar():
     }
 
     function pad(n) { return String(n).padStart(2, "0"); }
+    function localTodayYmd() {
+      const now = new Date();
+      return now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+    }
     const dotTip = document.getElementById("dot-tooltip");
     let pinnedDot = null;
     function eventPoint(e) {
@@ -1591,6 +1645,7 @@ def symptoms_calendar():
           ? entries.map(renderSymptomDetailCard).join("")
           : '<p class="empty">No symptoms logged for this day.</p>';
       } else {
+        _activeMedicationModalDate = dateStr;
         const entries = medsByDate[dateStr] || [];
         title.textContent = "Medications - " + dateLabel;
         const loggedHtml = entries.length
@@ -1641,6 +1696,30 @@ def symptoms_calendar():
             <button type="button" class="med-dose-btn"
               onclick="takeDoseWithTime(${r.schedule_id}, ${r.dose_num}, '${dateStr}')">Take with time</button>
           </div>`;
+      } else if (r.status === "taken") {
+        actionsHtml = `
+          <div class="med-dose-actions">
+            <details style="width:100%;">
+              <summary style="cursor:pointer;font-size:12px;color:#6b7280;user-select:none;">More actions</summary>
+              <div class="med-dose-actions" style="margin-top:8px;">
+                <button type="button" class="med-dose-btn med-dose-btn-miss"
+                  onclick="markDoseMissed(${r.schedule_id}, ${r.dose_num}, '${dateStr}')">Change to missed</button>
+                <input type="time" class="med-dose-time" id="med-time-${r.schedule_id}-${r.dose_num}"
+                  value="${fmtTimeFromTs(r.taken_at)}">
+                <button type="button" class="med-dose-btn"
+                  onclick="takeDoseWithTime(${r.schedule_id}, ${r.dose_num}, '${dateStr}')">Update taken time</button>
+              </div>
+            </details>
+          </div>`;
+      } else if (r.status === "missed") {
+        actionsHtml = `
+          <div class="med-dose-actions">
+            <button type="button" class="med-dose-btn med-dose-btn-take"
+              onclick="takeDoseNow(${r.schedule_id}, ${r.dose_num}, '${dateStr}')">Change to taken</button>
+            <input type="time" class="med-dose-time" id="med-time-${r.schedule_id}-${r.dose_num}">
+            <button type="button" class="med-dose-btn"
+              onclick="takeDoseWithTime(${r.schedule_id}, ${r.dose_num}, '${dateStr}')">Take with time</button>
+          </div>`;
       }
       return `
         <div class="med-dose-row">
@@ -1654,17 +1733,34 @@ def symptoms_calendar():
     function prnDoseRowHtml(r, dateStr) {
       const doseText = r.dose ? ` <span style="color:#7c3aed;font-weight:600;">${escHtml(r.dose)}</span>` : "";
       const nextDoseNum = Number(r.logged_count || 0) + 1;
+      const entries = Array.isArray(r.entries) ? r.entries : [];
+      const entryOptions = entries.map((e) => {
+        const t = e.taken_at ? fmtTimeFromTs(e.taken_at) : "--:--";
+        return `<option value="${e.dose_num}">#${e.dose_num} (${t})</option>`;
+      }).join("");
+      const deleteControls = entries.length
+        ? `<details style="width:100%;">
+             <summary style="cursor:pointer;font-size:12px;color:#6b7280;user-select:none;">More actions</summary>
+             <div class="med-dose-actions" style="margin-top:8px;">
+               <select class="med-dose-time" id="med-prn-delete-${r.schedule_id}" aria-label="Select PRN entry to delete" style="width:132px;">
+                 ${entryOptions}
+               </select>
+               <button type="button" class="med-dose-btn med-dose-btn-miss"
+                 onclick="deletePrnDose(${r.schedule_id}, '${dateStr}')">Delete selected</button>
+             </div>
+           </details>`
+        : "";
       return `
         <div class="med-dose-row">
           <div class="med-dose-title">${escHtml(r.name)}${doseText}</div>
           <div class="med-dose-meta">PRN</div>
           <div class="med-dose-status med-dose-status-pending">Logged: ${r.logged_count || 0}</div>
           <div class="med-dose-actions">
-            <button type="button" class="med-dose-btn med-dose-btn-take"
-              onclick="takeDoseNow(${r.schedule_id}, ${nextDoseNum}, '${dateStr}')">Take now</button>
+            <input type="date" class="med-dose-date" id="med-date-prn-${r.schedule_id}" value="${dateStr}">
             <input type="time" class="med-dose-time" id="med-time-prn-${r.schedule_id}">
             <button type="button" class="med-dose-btn"
               onclick="takeDoseWithTime(${r.schedule_id}, ${nextDoseNum}, '${dateStr}', true)">Take with time</button>
+            ${deleteControls}
           </div>
         </div>`;
     }
@@ -1703,6 +1799,11 @@ def symptoms_calendar():
       document.querySelectorAll("#med-day-actions-wrap input.med-dose-time").forEach((el) => {
         if (!el.value) el.value = nowTime;
       });
+      const today = localTodayYmd();
+      document.querySelectorAll("#med-day-actions-wrap input.med-dose-date").forEach((el) => {
+        el.max = today;
+        if (!el.value) el.value = _activeMedicationModalDate || today;
+      });
     }
 
     async function postDoseAction(url, payload, successText) {
@@ -1718,7 +1819,7 @@ def symptoms_calendar():
       const data = await resp.json();
       if (!resp.ok || !data.ok) throw new Error(data.error || "Could not update dose");
       if (window._showToast) window._showToast(successText, "success");
-      await loadMedicationDayActions(payload.scheduled_date);
+      await loadMedicationDayActions(_activeMedicationModalDate || payload.scheduled_date);
       await loadData();
     }
 
@@ -1750,15 +1851,35 @@ def symptoms_calendar():
     async function takeDoseWithTime(scheduleId, doseNum, dateStr, isPrn) {
       const inputId = isPrn ? `med-time-prn-${scheduleId}` : `med-time-${scheduleId}-${doseNum}`;
       const t = (document.getElementById(inputId)?.value || "").trim();
+      const selectedDate = isPrn
+        ? ((document.getElementById(`med-date-prn-${scheduleId}`)?.value || "").trim() || dateStr)
+        : dateStr;
       try {
         await postDoseAction("/api/medications/doses/take", {
           schedule_id: scheduleId,
           dose_num: doseNum,
-          scheduled_date: dateStr,
+          scheduled_date: selectedDate,
           taken_time: t,
         }, "Dose saved");
       } catch (err) {
         if (window._showToast) window._showToast(err.message || "Could not save dose", "error");
+      }
+    }
+
+    async function deletePrnDose(scheduleId, dateStr) {
+      const doseNum = Number((document.getElementById(`med-prn-delete-${scheduleId}`)?.value || "").trim());
+      if (!doseNum) {
+        if (window._showToast) window._showToast("Select a PRN entry to delete", "error");
+        return;
+      }
+      try {
+        await postDoseAction("/api/medications/doses/undo", {
+          schedule_id: scheduleId,
+          dose_num: doseNum,
+          scheduled_date: dateStr,
+        }, "PRN entry deleted");
+      } catch (err) {
+        if (window._showToast) window._showToast(err.message || "Could not delete PRN entry", "error");
       }
     }
 
@@ -1805,6 +1926,7 @@ def symptoms_calendar():
 
     let byDate = {};     // "YYYY-MM-DD" -> [{id,name,severity,notes,timestamp,end_time}]
     let medsByDate = {}; // "YYYY-MM-DD" -> [{id,name,dose,notes,timestamp}]
+    let _activeMedicationModalDate = "";
     let symptomById = {}; // id -> symptom row
     let curYear, curMonth, selectedDate = null;
     let calendarInitialized = false;
