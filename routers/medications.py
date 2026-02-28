@@ -48,8 +48,9 @@ def api_medications():
     uid = _current_user_id.get()
     with get_db() as conn:
         taken = conn.execute(
-            "SELECT 'dose_taken_' || md.id AS id, ms.name, ms.dose,"
-            " 'Scheduled dose taken' AS notes, 'taken' AS status, md.taken_at AS timestamp"
+            "SELECT 'dose_taken_' || md.id AS id, md.id AS dose_id, ms.name, ms.dose,"
+            " CASE WHEN ms.frequency='prn' THEN '' ELSE 'Scheduled dose taken' END AS notes,"
+            " 'taken' AS status, md.taken_at AS timestamp"
             " FROM medication_doses md"
             " JOIN medication_schedules ms ON ms.id = md.schedule_id AND ms.user_id = md.user_id"
             " WHERE md.user_id=? AND md.status='taken' AND md.taken_at != ''"
@@ -57,7 +58,7 @@ def api_medications():
             (uid,),
         ).fetchall()
         missed = conn.execute(
-            "SELECT 'dose_missed_' || md.id AS id, ms.name, ms.dose, 'Medication missed' AS notes, 'missed' AS status,"
+            "SELECT 'dose_missed_' || md.id AS id, md.id AS dose_id, ms.name, ms.dose, 'Medication missed' AS notes, 'missed' AS status,"
             " md.scheduled_date || ' 00:00:00' AS timestamp"
             " FROM medication_doses md"
             " JOIN medication_schedules ms ON ms.id = md.schedule_id AND ms.user_id = md.user_id"

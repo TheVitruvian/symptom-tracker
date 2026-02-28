@@ -254,6 +254,7 @@ def medications_today(d: str = "", w_end: str = ""):
         if dpd == 0:
             prn_taken = [r for r in dose_rows_local if r["schedule_id"] == sid and r["status"] == "taken"]
             prn_count = len(prn_taken)
+            next_prn_dose_num = max((int(r["dose_num"]) for r in prn_taken), default=0) + 1
             prn_logs += prn_count
             prn_word = "dose" if prn_count == 1 else "doses"
             prn_delete_html = ""
@@ -283,17 +284,17 @@ def medications_today(d: str = "", w_end: str = ""):
                 <form method="post" action="/medications/doses/take" class="dose-action-form" style="margin:0;">
                   <input type="hidden" name="schedule_id" value="{sid}">
                   <input type="hidden" name="scheduled_date" value="{day_str}">
-                  <input type="hidden" name="dose_num" value="{prn_count + 1}">
+                  <input type="hidden" name="dose_num" value="{next_prn_dose_num}">
                   <input type="hidden" name="redirect_to" value="{redirect_to}">
                   <button type="submit" class="dose-btn dose-btn-primary">+ Log now</button>
                 </form>
                 <details class="dose-more">
-                  <summary>More options</summary>
+                  <summary>More actions</summary>
                   <div class="dose-more-actions">
                     <form method="post" action="/medications/doses/take" class="dose-time-form dose-action-form">
                       <input type="hidden" name="schedule_id" value="{sid}">
                       <input type="hidden" name="scheduled_date" value="{day_str}">
-                      <input type="hidden" name="dose_num" value="{prn_count + 1}">
+                      <input type="hidden" name="dose_num" value="{next_prn_dose_num}">
                       <input type="hidden" name="redirect_to" value="{redirect_to}">
                       <input type="time" name="taken_time" data-date="{day_str}" class="dose-time dose-time-input">
                       <button type="submit" class="dose-btn dose-btn-secondary">Log with time</button>
@@ -649,6 +650,7 @@ def medications_today(d: str = "", w_end: str = ""):
       function prnRowHtml(r, dayStr) {{
         const doseHtml = r.dose ? ` <span class="med-dose">${{escHtml(r.dose)}}</span>` : "";
         const entries = Array.isArray(r.entries) ? r.entries : [];
+        const nextDoseNum = entries.reduce((maxNum, e) => Math.max(maxNum, Number(e.dose_num || 0)), 0) + 1;
         const options = entries.map((e) => {{
           const t = fmtTimeFromTs(e.taken_at) || "--:--";
           return `<option value="${{e.dose_num}}">#${{e.dose_num}} (${{t}})</option>`;
@@ -663,15 +665,15 @@ def medications_today(d: str = "", w_end: str = ""):
             <div class="dose-actions">
               <div class="primary-actions-row">
                 <button type="button" class="dose-btn dose-btn-primary" data-dose-action="take-now-prn"
-                  data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{Number(r.logged_count || 0) + 1}}">+ Log now</button>
+                  data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{nextDoseNum}}">+ Log now</button>
               </div>
               <details class="dose-more">
-                <summary>More options</summary>
+                <summary>More actions</summary>
                 <div class="dose-more-actions">
                   <div class="dose-time-form">
                     <input type="time" class="dose-time dose-time-input" id="prn-time-${{r.schedule_id}}" data-date="${{dayStr}}">
                     <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-time-prn"
-                      data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{Number(r.logged_count || 0) + 1}}">Log with time</button>
+                      data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{nextDoseNum}}">Log with time</button>
                   </div>
                   ${{entries.length ? `
                   <div class="dose-time-form">
@@ -1781,4 +1783,17 @@ def api_doses_undo(payload: dict = Body(...)):
             (schedule_id, uid, scheduled_day.isoformat(), dose_num),
         )
         conn.commit()
+    return JSONResponse({"ok": True})
+
+
+@router.post("/api/medications/doses/{dose_id}/delete")
+def api_doses_delete_by_id(dose_id: int):
+    uid = _current_user_id.get()
+    with get_db() as conn:
+        result = conn.execute(
+            "DELETE FROM medication_doses WHERE id=? AND user_id=?", (dose_id, uid)
+        )
+        conn.commit()
+    if result.rowcount == 0:
+        return JSONResponse({"ok": False, "error": "Dose not found"}, status_code=404)
     return JSONResponse({"ok": True})

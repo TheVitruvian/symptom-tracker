@@ -488,6 +488,9 @@ def symptoms_chart():
 
     async function init() {{
       bindControlTips();
+      const todayMax = clientTodayISO();
+      document.getElementById("range-from").max = todayMax;
+      document.getElementById("range-to").max = todayMax;
       const [sr, mr, ar] = await Promise.all([
         fetch("/api/symptoms"), fetch("/api/medications"), fetch("/api/medications/adherence")
       ]);
@@ -1162,12 +1165,12 @@ def symptoms_chart():
            + `<div class="control-group">`
            + `<label for="patterns-from" class="control-label">From</label>`
            + `<input type="date" id="patterns-from" value="${{_patternsFrom}}" onchange="updatePatternsRange()"`
-           + ` class="control-input">`
+           + ` class="control-input" max="${{clientTodayISO()}}">`
            + `</div>`
            + `<div class="control-group">`
            + `<label for="patterns-to" class="control-label">To</label>`
            + `<input type="date" id="patterns-to" value="${{_patternsTo}}" onchange="updatePatternsRange()"`
-           + ` class="control-input">`
+           + ` class="control-input" max="${{clientTodayISO()}}">`
            + `</div>`
            + `<div class="preset-row">`
            + `<button class="${{p7Class}}" onclick="setPatternsPreset(7)">7d</button>`
@@ -1218,9 +1221,9 @@ def symptoms_chart():
       let html = `<table style="border-collapse:collapse; width:100%;">`;
       html = `<div class="screen-only controls-row" style="margin-bottom:10px;">`
         + `<div class="control-group"><label for="corr-from" class="control-label">From</label>`
-        + `<input type="date" id="corr-from" class="control-input" value="${{_corrFrom}}" onchange="updateCorrRange()"></div>`
+        + `<input type="date" id="corr-from" class="control-input" value="${{_corrFrom}}" onchange="updateCorrRange()" max="${{clientTodayISO()}}"></div>`
         + `<div class="control-group"><label for="corr-to" class="control-label">To</label>`
-        + `<input type="date" id="corr-to" class="control-input" value="${{_corrTo}}" onchange="updateCorrRange()"></div>`
+        + `<input type="date" id="corr-to" class="control-input" value="${{_corrTo}}" onchange="updateCorrRange()" max="${{clientTodayISO()}}"></div>`
         + `<div class="preset-row">`
         + `<button class="${{p7Class}}" onclick="setCorrPreset(7)">7d</button>`
         + `<button class="${{p30Class}}" onclick="setCorrPreset(30)">30d</button>`
@@ -1277,9 +1280,9 @@ def symptoms_chart():
 
       let html = `<div class="screen-only controls-row" style="margin-bottom:10px;">`
         + `<div class="control-group"><label for="med-corr-from" class="control-label">From</label>`
-        + `<input type="date" id="med-corr-from" class="control-input" value="${{_medCorrFrom}}" onchange="updateMedCorrRange()"></div>`
+        + `<input type="date" id="med-corr-from" class="control-input" value="${{_medCorrFrom}}" onchange="updateMedCorrRange()" max="${{clientTodayISO()}}"></div>`
         + `<div class="control-group"><label for="med-corr-to" class="control-label">To</label>`
-        + `<input type="date" id="med-corr-to" class="control-input" value="${{_medCorrTo}}" onchange="updateMedCorrRange()"></div>`
+        + `<input type="date" id="med-corr-to" class="control-input" value="${{_medCorrTo}}" onchange="updateMedCorrRange()" max="${{clientTodayISO()}}"></div>`
         + `<div class="preset-row">`
         + `<button class="${{p7Class}}" onclick="setMedCorrPreset(7)">7d</button>`
         + `<button class="${{p30Class}}" onclick="setMedCorrPreset(30)">30d</button>`
@@ -1339,6 +1342,9 @@ def symptoms_calendar():
     .cal-grid td.has-data { cursor: pointer; }
     .cal-grid td.has-data:hover { background: #f0f9ff; }
     .cal-grid td.selected { background: #eff6ff; }
+    .cal-grid td.future { background: #fafafa; pointer-events: none; }
+    .cal-grid td.future .day-num { color: #d1d5db; }
+    .cal-nav button:disabled { opacity: .35; cursor: default; }
     .day-num { font-size: 12px; font-weight: 600; color: #374151; }
     .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-left: 3px;
       vertical-align: middle; }
@@ -1618,18 +1624,47 @@ def symptoms_calendar():
         ? `<span style="font-size:12px;color:#7c3aed;margin-top:2px;display:block;">${escHtml(m.dose)}</span>`
         : "";
       const notesHtml = m.notes ? `<p class="detail-notes">${escHtml(m.notes)}</p>` : "";
+      const dateStr = m.timestamp.slice(0, 10);
       return `
         <div class="detail-card">
           <div class="detail-header">
             <div class="badge" style="background:#a855f7;width:32px;height:32px;font-size:11px;flex-shrink:0;">Rx</div>
-            <div>
+            <div style="flex:1;">
               <div class="card-name">${escHtml(m.name)}</div>
               ${doseHtml}
               <div class="detail-time">${time}</div>
             </div>
+            <button type="button" onclick="deleteLoggedDose(${m.dose_id}, '${dateStr}')"
+              style="border:none;background:none;cursor:pointer;color:#9ca3af;font-size:18px;line-height:1;padding:2px 4px;flex-shrink:0;"
+              title="Delete this record">&times;</button>
           </div>
           ${notesHtml}
         </div>`;
+    }
+
+    async function deleteLoggedDose(doseId, dateStr) {
+      if (!confirm("Delete this dose record? This cannot be undone.")) return;
+      const csrf = window._getCookie ? window._getCookie("csrf_token") : "";
+      const resp = await fetch(`/api/medications/doses/${doseId}/delete`, {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrf },
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        alert(data.error || "Could not delete dose record");
+        return;
+      }
+      if (window._showToast) window._showToast("Dose record deleted", "success");
+      const medResp = await fetch("/api/medications");
+      const medData = await medResp.json();
+      medsByDate = {};
+      for (const m of medData.medications) {
+        const d = m.timestamp.slice(0, 10);
+        if (!medsByDate[d]) medsByDate[d] = [];
+        medsByDate[d].push(m);
+      }
+      renderCalendar();
+      openDayEntriesModal(dateStr, "medications");
     }
 
     function openDayEntriesModal(dateStr, kind) {
@@ -1731,23 +1766,20 @@ def symptoms_calendar():
 
     function prnDoseRowHtml(r, dateStr) {
       const doseText = r.dose ? ` <span style="color:#7c3aed;font-weight:600;">${escHtml(r.dose)}</span>` : "";
-      const nextDoseNum = Number(r.logged_count || 0) + 1;
       const entries = Array.isArray(r.entries) ? r.entries : [];
+      const nextDoseNum = entries.reduce((maxNum, e) => Math.max(maxNum, Number(e.dose_num || 0)), 0) + 1;
       const entryOptions = entries.map((e) => {
         const t = e.taken_at ? fmtTimeFromTs(e.taken_at) : "--:--";
         return `<option value="${e.dose_num}">#${e.dose_num} (${t})</option>`;
       }).join("");
       const deleteControls = entries.length
-        ? `<details style="width:100%;">
-             <summary style="cursor:pointer;font-size:12px;color:#6b7280;user-select:none;">More actions</summary>
-             <div class="med-dose-actions" style="margin-top:8px;">
-               <select class="med-dose-time" id="med-prn-delete-${r.schedule_id}" aria-label="Select PRN entry to delete" style="width:132px;">
-                 ${entryOptions}
-               </select>
-               <button type="button" class="med-dose-btn med-dose-btn-miss"
-                 onclick="deletePrnDose(${r.schedule_id}, '${dateStr}')">Delete selected</button>
-             </div>
-           </details>`
+        ? `<div class="med-dose-actions" style="margin-top:8px;">
+             <select class="med-dose-time" id="med-prn-delete-${r.schedule_id}" aria-label="Select PRN entry to delete" style="width:132px;">
+               ${entryOptions}
+             </select>
+             <button type="button" class="med-dose-btn med-dose-btn-miss"
+               onclick="deletePrnDose(${r.schedule_id}, '${dateStr}')">Delete selected</button>
+           </div>`
         : "";
       return `
         <div class="med-dose-row">
@@ -1755,10 +1787,17 @@ def symptoms_calendar():
           <div class="med-dose-meta">PRN</div>
           <div class="med-dose-status med-dose-status-pending">Logged: ${r.logged_count || 0}</div>
           <div class="med-dose-actions">
-            <input type="time" class="med-dose-time" id="med-time-prn-${r.schedule_id}">
-            <button type="button" class="med-dose-btn"
-              onclick="takeDoseWithTime(${r.schedule_id}, ${nextDoseNum}, '${dateStr}', true)">Take with time</button>
-            ${deleteControls}
+            <button type="button" class="med-dose-btn med-dose-btn-take"
+              onclick="takeDoseNow(${r.schedule_id}, ${nextDoseNum}, '${dateStr}')">+ Log now</button>
+            <details style="width:100%;">
+              <summary style="cursor:pointer;font-size:11px;color:#6b7280;user-select:none;">More actions</summary>
+              <div class="med-dose-actions" style="margin-top:8px;">
+                <input type="time" class="med-dose-time" id="med-time-prn-${r.schedule_id}">
+                <button type="button" class="med-dose-btn"
+                  onclick="takeDoseWithTime(${r.schedule_id}, ${nextDoseNum}, '${dateStr}', true)">Log with time</button>
+              </div>
+              ${deleteControls}
+            </details>
           </div>
         </div>`;
     }
@@ -2029,6 +2068,12 @@ def symptoms_calendar():
       curMonth += delta;
       if (curMonth > 11) { curMonth = 0; curYear++; }
       if (curMonth < 0)  { curMonth = 11; curYear--; }
+      // Never advance past the current month
+      const now = new Date();
+      if (curYear > now.getFullYear() || (curYear === now.getFullYear() && curMonth > now.getMonth())) {
+        curYear = now.getFullYear();
+        curMonth = now.getMonth();
+      }
       selectedDate = null;
       renderCalendar();
     }
@@ -2038,6 +2083,8 @@ def symptoms_calendar():
 
       const today = new Date();
       const todayStr = today.getFullYear() + "-" + pad(today.getMonth()+1) + "-" + pad(today.getDate());
+      const isCurrentMonth = curYear === today.getFullYear() && curMonth === today.getMonth();
+      document.getElementById("next-btn").disabled = isCurrentMonth;
 
       // First day of month (0=Sun), days in month
       const firstDay = new Date(curYear, curMonth, 1).getDay();
@@ -2069,11 +2116,13 @@ def symptoms_calendar():
             td.innerHTML = `<span class="day-num">${nextCount++}</span>`;
           } else {
             const dateStr = curYear + "-" + pad(curMonth + 1) + "-" + pad(dayCount);
+            const isFuture = dateStr > todayStr;
             const entries = byDate[dateStr];
             const medEntries = medsByDate[dateStr];
             let classes = "";
+            if (isFuture) classes += " future";
             if (dateStr === todayStr) classes += " today";
-            if (entries || medEntries) classes += " has-data";
+            if (!isFuture && (entries || medEntries)) classes += " has-data";
             if (dateStr === selectedDate) classes += " selected";
             td.className = classes.trim();
 
@@ -2094,14 +2143,16 @@ def symptoms_calendar():
                 inner += `<span class="count">×${medEntries.length}</span>`;
               }
             }
-            if (entries || medEntries) {
+            if (!isFuture && (entries || medEntries)) {
               td.setAttribute("data-date", dateStr);
               td.addEventListener("click", () => onDayClick(dateStr));
             }
             td.innerHTML = inner;
-            const dots = td.querySelectorAll(".dot");
-            if (hasEntries && dots[0]) bindDotTip(dots[0], symptomDotTip(entries), dateStr, "symptoms");
-            if (hasMedEntries && dots[hasEntries ? 1 : 0]) bindDotTip(dots[hasEntries ? 1 : 0], medsDotTip(medEntries), dateStr, "medications");
+            if (!isFuture) {
+              const dots = td.querySelectorAll(".dot");
+              if (hasEntries && dots[0]) bindDotTip(dots[0], symptomDotTip(entries), dateStr, "symptoms");
+              if (hasMedEntries && dots[hasEntries ? 1 : 0]) bindDotTip(dots[hasEntries ? 1 : 0], medsDotTip(medEntries), dateStr, "medications");
+            }
             dayCount++;
           }
           tr.appendChild(td);
@@ -2153,6 +2204,9 @@ def symptoms_calendar():
       const errEl = document.getElementById("symptom-modal-error");
       errEl.style.display = "none";
       errEl.textContent = "";
+      const nowDT = localNowDateTimeInput();
+      document.getElementById("symptom-start").max = nowDT;
+      document.getElementById("symptom-end").max = nowDT;
       if (symptomId === null || symptomId === undefined) {
         title.textContent = "Log Symptom";
         idEl.value = "";
