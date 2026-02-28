@@ -1653,7 +1653,10 @@ def api_medications_day(d: str = ""):
 
 def _take_dose_json(uid: int, schedule_id: int, scheduled_day: date, dose_num: int, taken_time: str):
     now_dt = _client_now_or_server()
-    taken_dt = now_dt
+    if scheduled_day < now_dt.date():
+        taken_dt = datetime(scheduled_day.year, scheduled_day.month, scheduled_day.day, 12, 0, 0)
+    else:
+        taken_dt = now_dt
     if taken_time.strip():
         try:
             taken_dt = datetime.strptime(f"{scheduled_day.isoformat()} {taken_time.strip()}", "%Y-%m-%d %H:%M")

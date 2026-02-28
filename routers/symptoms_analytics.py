@@ -1829,14 +1829,18 @@ def symptoms_calendar():
     }
 
     function seedDoseTimeInputs() {
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2, "0");
-      const mm = String(now.getMinutes()).padStart(2, "0");
-      const nowTime = `${hh}:${mm}`;
-      document.querySelectorAll("#med-day-actions-wrap input.med-dose-time").forEach((el) => {
-        if (!el.value) el.value = nowTime;
-      });
       const today = localTodayYmd();
+      const isPast = _activeMedicationModalDate && _activeMedicationModalDate < today;
+      let defaultTime;
+      if (isPast) {
+        defaultTime = "12:00";
+      } else {
+        const now = new Date();
+        defaultTime = pad(now.getHours()) + ":" + pad(now.getMinutes());
+      }
+      document.querySelectorAll("#med-day-actions-wrap input.med-dose-time").forEach((el) => {
+        if (!el.value) el.value = defaultTime;
+      });
       document.querySelectorAll("#med-day-actions-wrap input.med-dose-date").forEach((el) => {
         el.max = today;
         if (!el.value) el.value = _activeMedicationModalDate || today;
