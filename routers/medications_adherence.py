@@ -154,7 +154,7 @@ def medications_today(d: str = "", w_end: str = ""):
     with get_db() as conn:
         schedules = conn.execute(
             "SELECT id, name, dose, frequency, created_at FROM medication_schedules"
-            " WHERE user_id=? AND active=1 ORDER BY name",
+            " WHERE user_id=? AND active=1 AND paused=0 ORDER BY name",
             (uid,),
         ).fetchall()
 
@@ -1510,7 +1510,7 @@ def doses_take(
     taken_at = _to_utc_storage(taken_dt)
     with get_db() as conn:
         sched = conn.execute(
-            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=? AND active=1 AND paused=0",
             (schedule_id, uid),
         ).fetchone()
         if not sched:
@@ -1521,7 +1521,7 @@ def doses_take(
         created_at = _parse_created_at(sched["created_at"])
         if created_at and scheduled_day < created_at.date():
             return RedirectResponse(url=redirect_to, status_code=303)
-        if created_at and scheduled_day == created_at.date() and taken_dt < created_at:
+        if taken_time.strip() and created_at and scheduled_day == created_at.date() and taken_dt < created_at:
             return RedirectResponse(url=redirect_to, status_code=303)
         dpd = _doses_per_day(sched["frequency"])
         if dpd > 0 and dose_num > dpd:
@@ -1553,7 +1553,7 @@ def doses_miss(
         return RedirectResponse(url=redirect_to, status_code=303)
     with get_db() as conn:
         sched = conn.execute(
-            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=? AND active=1 AND paused=0",
             (schedule_id, uid),
         ).fetchone()
         if not sched:
@@ -1594,7 +1594,7 @@ def doses_undo(
         return RedirectResponse(url=redirect_to, status_code=303)
     with get_db() as conn:
         sched = conn.execute(
-            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=? AND active=1 AND paused=0",
             (schedule_id, uid),
         ).fetchone()
         if not sched:
@@ -1667,7 +1667,7 @@ def _take_dose_json(uid: int, schedule_id: int, scheduled_day: date, dose_num: i
     taken_at = _to_utc_storage(taken_dt)
     with get_db() as conn:
         sched = conn.execute(
-            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=? AND active=1 AND paused=0",
             (schedule_id, uid),
         ).fetchone()
         if not sched:
@@ -1678,7 +1678,7 @@ def _take_dose_json(uid: int, schedule_id: int, scheduled_day: date, dose_num: i
         created_at = _parse_created_at(sched["created_at"])
         if created_at and scheduled_day < created_at.date():
             return JSONResponse({"ok": False, "error": "Date before schedule created"}, status_code=400)
-        if created_at and scheduled_day == created_at.date() and taken_dt < created_at:
+        if taken_time.strip() and created_at and scheduled_day == created_at.date() and taken_dt < created_at:
             return JSONResponse({"ok": False, "error": "Time before schedule created"}, status_code=400)
         dpd = _doses_per_day(sched["frequency"])
         if dose_num < 1 or (dpd > 0 and dose_num > dpd):
@@ -1726,7 +1726,7 @@ def api_doses_miss(payload: dict = Body(...)):
         return JSONResponse({"ok": False, "error": "Invalid date"}, status_code=400)
     with get_db() as conn:
         sched = conn.execute(
-            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=? AND active=1 AND paused=0",
             (schedule_id, uid),
         ).fetchone()
         if not sched:
@@ -1767,7 +1767,7 @@ def api_doses_undo(payload: dict = Body(...)):
         return JSONResponse({"ok": False, "error": "Invalid date or dose"}, status_code=400)
     with get_db() as conn:
         sched = conn.execute(
-            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=? AND active=1 AND paused=0",
             (schedule_id, uid),
         ).fetchone()
         if not sched:

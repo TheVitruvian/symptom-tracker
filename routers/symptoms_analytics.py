@@ -1619,10 +1619,12 @@ def symptoms_calendar():
     }
 
     function renderMedicationDetailCard(m) {
-      const time = m.timestamp.slice(11, 16);
       const doseHtml = m.dose
         ? `<span style="font-size:12px;color:#7c3aed;margin-top:2px;display:block;">${escHtml(m.dose)}</span>`
         : "";
+      const timeHtml = m.status === "taken"
+        ? `<div class="detail-time">${m.timestamp.slice(11, 16)}</div>`
+        : `<div class="detail-time" style="color:#ef4444;">Missed</div>`;
       const notesHtml = m.notes ? `<p class="detail-notes">${escHtml(m.notes)}</p>` : "";
       const dateStr = m.timestamp.slice(0, 10);
       return `
@@ -1632,7 +1634,7 @@ def symptoms_calendar():
             <div style="flex:1;">
               <div class="card-name">${escHtml(m.name)}</div>
               ${doseHtml}
-              <div class="detail-time">${time}</div>
+              ${timeHtml}
             </div>
             <button type="button" onclick="deleteLoggedDose(${m.dose_id}, '${dateStr}')"
               style="border:none;background:none;cursor:pointer;color:#9ca3af;font-size:18px;line-height:1;padding:2px 4px;flex-shrink:0;"
@@ -1689,7 +1691,7 @@ def symptoms_calendar():
           <div id="med-day-actions-wrap">
             <p style="font-size:12px;color:#6b7280;margin:0 0 8px;">Loading scheduled doses...</p>
           </div>
-          <div style="margin-top:12px;">
+          <div id="med-day-logged-wrap" style="margin-top:12px;">
             <h4 style="margin:0 0 8px;font-size:13px;color:#374151;">Logged Medications</h4>
             ${loggedHtml}
           </div>`;
@@ -1862,6 +1864,15 @@ def symptoms_calendar():
       if (window._showToast) window._showToast(successText, "success");
       await loadMedicationDayActions(_activeMedicationModalDate || payload.scheduled_date);
       await loadData();
+      const dateStr = _activeMedicationModalDate || payload.scheduled_date;
+      const wrap = document.getElementById("med-day-logged-wrap");
+      if (wrap && dateStr) {
+        const entries = medsByDate[dateStr] || [];
+        const loggedHtml = entries.length
+          ? entries.map(renderMedicationDetailCard).join("")
+          : '<p class="empty" style="margin-top:6px;">No medications logged for this day.</p>';
+        wrap.innerHTML = '<h4 style="margin:0 0 8px;font-size:13px;color:#374151;">Logged Medications</h4>' + loggedHtml;
+      }
     }
 
     async function takeDoseNow(scheduleId, doseNum, dateStr) {
