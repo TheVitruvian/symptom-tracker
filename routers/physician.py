@@ -1,4 +1,5 @@
 import html
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -11,6 +12,8 @@ from security import (
     _set_physician_cookie,
     _get_authenticated_physician,
     _physician_owns_patient,
+    _is_physician_login_allowed,
+    _is_physician_signup_allowed,
 )
 from ui import _calc_age
 
@@ -108,6 +111,13 @@ def physician_signup_post(
     new_password: str = Form(""),
     confirm_password: str = Form(""),
 ):
+    ip = request.client.host if request.client else "unknown"
+    if not _is_physician_signup_allowed(ip):
+        return RedirectResponse(url="/physician/signup?error=Too+many+attempts.+Please+wait.", status_code=303)
+    if len(username) > 60:
+        return RedirectResponse(url="/physician/signup?error=Username+must+be+60+characters+or+fewer", status_code=303)
+    if len(new_password) > 1000:
+        return RedirectResponse(url="/physician/signup?error=Password+is+too+long", status_code=303)
     if not username.strip():
         return RedirectResponse(url="/physician/signup?error=Username+is+required", status_code=303)
     if len(new_password) < 8:
@@ -178,6 +188,11 @@ def physician_login_get(request: Request, error: str = ""):
 def physician_login_post(
     request: Request, username: str = Form(""), password: str = Form("")
 ):
+    ip = request.client.host if request.client else "unknown"
+    if not _is_physician_login_allowed(ip):
+        return RedirectResponse(url="/physician/login?error=Too+many+attempts.+Please+wait.", status_code=303)
+    if len(username) > 60 or len(password) > 1000:
+        return RedirectResponse(url="/physician/login?error=Incorrect+username+or+password", status_code=303)
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM physicians WHERE username = ?", (username.strip(),)
@@ -293,6 +308,8 @@ def physician_patients_add(request: Request, share_code: str = Form("")):
     code = share_code.strip().upper()
     if not code:
         return RedirectResponse(url="/physician?error=Share+code+is+required", status_code=303)
+    if len(code) != 8 or not all(c in "0123456789ABCDEF" for c in code):
+        return RedirectResponse(url="/physician?error=Invalid+share+code+format", status_code=303)
     with get_db() as conn:
         patient = conn.execute(
             "SELECT id FROM user_profile WHERE share_code = ?", (code,)
@@ -329,6 +346,13 @@ def physician_switch(request: Request, patient_id: int):
         return RedirectResponse(url="/physician/login", status_code=303)
     if not _physician_owns_patient(physician["id"], patient_id):
         return RedirectResponse(url="/physician", status_code=303)
+    accessed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO physician_access_log (physician_id, patient_id, accessed_at) VALUES (?, ?, ?)",
+            (physician["id"], patient_id, accessed_at),
+        )
+        conn.commit()
     resp = RedirectResponse(url="/symptoms/chart", status_code=303)
     resp.set_cookie(
         PHYSICIAN_CTX_COOKIE,

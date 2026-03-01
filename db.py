@@ -128,6 +128,19 @@ def init_db():
                 PRIMARY KEY (physician_id, patient_id)
             )
         """)
+        # Physician access audit log
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS physician_access_log (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                physician_id INTEGER NOT NULL REFERENCES physicians(id),
+                patient_id   INTEGER NOT NULL REFERENCES user_profile(id),
+                accessed_at  TEXT    NOT NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_access_log_patient"
+            " ON physician_access_log(patient_id, accessed_at DESC)"
+        )
         # Medication schedules and dose tracking
         conn.execute("""
             CREATE TABLE IF NOT EXISTS medication_schedules (

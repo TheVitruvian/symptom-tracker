@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 _rate_lock = threading.Lock()
 _login_buckets: dict[str, list[float]] = defaultdict(list)
 _reset_buckets: dict[str, list[float]] = defaultdict(list)
+_physician_login_buckets: dict[str, list[float]] = defaultdict(list)
+_physician_signup_buckets: dict[str, list[float]] = defaultdict(list)
 
 _LOGIN_WINDOW = 300   # 5 minutes
 _LOGIN_MAX = 10       # attempts per window per IP
@@ -54,6 +56,14 @@ def _is_login_allowed(ip: str) -> bool:
 
 def _is_reset_allowed(ip: str) -> bool:
     return _check_rate_limit(_reset_buckets, ip, _RESET_WINDOW, _RESET_MAX)
+
+
+def _is_physician_login_allowed(ip: str) -> bool:
+    return _check_rate_limit(_physician_login_buckets, ip, _LOGIN_WINDOW, _LOGIN_MAX)
+
+
+def _is_physician_signup_allowed(ip: str) -> bool:
+    return _check_rate_limit(_physician_signup_buckets, ip, _RESET_WINDOW, _RESET_MAX)
 
 
 def _request_origin_host(request: Request) -> str:

@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import date
 
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -11,8 +12,23 @@ from ui import PAGE_STYLE, _nav_bar
 router = APIRouter()
 
 
+def _validate_date_range(from_date: str, to_date: str):
+    """Return an error string or None. Validates ISO format and logical range."""
+    try:
+        fd = date.fromisoformat(from_date) if from_date else None
+        td = date.fromisoformat(to_date) if to_date else None
+    except ValueError:
+        return "Invalid date format"
+    if fd and td and td < fd:
+        return "to_date must be on or after from_date"
+    return None
+
+
 @router.get("/api/symptoms/correlations")
 def api_symptoms_correlations(from_date: str = "", to_date: str = ""):
+    err = _validate_date_range(from_date, to_date)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
     uid = _current_user_id.get()
     by_name_day = defaultdict(list)
     with get_db() as conn:
@@ -37,6 +53,9 @@ def api_symptoms_correlations(from_date: str = "", to_date: str = ""):
 
 @router.get("/api/correlations/med-symptom")
 def api_med_symptom_correlations(from_date: str = "", to_date: str = ""):
+    err = _validate_date_range(from_date, to_date)
+    if err:
+        return JSONResponse({"error": err}, status_code=400)
     uid = _current_user_id.get()
     symp_by_name_day = defaultdict(list)
     med_by_name_day = defaultdict(int)
@@ -1573,14 +1592,27 @@ def symptoms_calendar():
     function symptomDotTip(entries) {
       const byName = {};
       for (const e of entries) {
-        if (!byName[e.name]) byName[e.name] = { count: 0, maxSev: 0 };
+        const startDate = e.timestamp.slice(0, 10);
+        const endDate = e.end_time ? e.end_time.slice(0, 10) : startDate;
+        if (!byName[e.name]) byName[e.name] = { count: 0, maxSev: 0, startDate, endDate };
         byName[e.name].count += 1;
         byName[e.name].maxSev = Math.max(byName[e.name].maxSev, e.severity);
+        if (startDate < byName[e.name].startDate) byName[e.name].startDate = startDate;
+        if (endDate > byName[e.name].endDate) byName[e.name].endDate = endDate;
+      }
+      function fmtD(ds) {
+        const [, m, d] = ds.split("-");
+        return MONTHS[parseInt(m) - 1].slice(0, 3) + " " + parseInt(d);
       }
       const rows = Object.entries(byName)
         .sort((a, b) => b[1].maxSev - a[1].maxSev || b[1].count - a[1].count)
         .slice(0, 3)
-        .map(([name, info]) => `${escHtml(name)} (${info.maxSev}/10${info.count > 1 ? `, ×${info.count}` : ""})`);
+        .map(([name, info]) => {
+          const rangeHtml = info.endDate > info.startDate
+            ? ` <span style="color:#9ca3af;">${fmtD(info.startDate)}\u2013${fmtD(info.endDate)}</span>`
+            : "";
+          return `${escHtml(name)} (${info.maxSev}/10${info.count > 1 ? `, \u00d7${info.count}` : ""})${rangeHtml}`;
+        });
       const more = Object.keys(byName).length > 3 ? `<br>+${Object.keys(byName).length - 3} more` : "";
       return `<strong>Symptoms</strong><br>${rows.join("<br>")}${more}`;
     }
@@ -1682,18 +1714,10 @@ def symptoms_calendar():
           : '<p class="empty">No symptoms logged for this day.</p>';
       } else {
         _activeMedicationModalDate = dateStr;
-        const entries = medsByDate[dateStr] || [];
         title.textContent = "Medications - " + dateLabel;
-        const loggedHtml = entries.length
-          ? entries.map(renderMedicationDetailCard).join("")
-          : '<p class="empty" style="margin-top:6px;">No medications logged for this day.</p>';
         body.innerHTML = `
           <div id="med-day-actions-wrap">
             <p style="font-size:12px;color:#6b7280;margin:0 0 8px;">Loading scheduled doses...</p>
-          </div>
-          <div id="med-day-logged-wrap" style="margin-top:12px;">
-            <h4 style="margin:0 0 8px;font-size:13px;color:#374151;">Logged Medications</h4>
-            ${loggedHtml}
           </div>`;
         loadMedicationDayActions(dateStr).catch(() => {
           const wrap = document.getElementById("med-day-actions-wrap");
@@ -1864,15 +1888,6 @@ def symptoms_calendar():
       if (window._showToast) window._showToast(successText, "success");
       await loadMedicationDayActions(_activeMedicationModalDate || payload.scheduled_date);
       await loadData();
-      const dateStr = _activeMedicationModalDate || payload.scheduled_date;
-      const wrap = document.getElementById("med-day-logged-wrap");
-      if (wrap && dateStr) {
-        const entries = medsByDate[dateStr] || [];
-        const loggedHtml = entries.length
-          ? entries.map(renderMedicationDetailCard).join("")
-          : '<p class="empty" style="margin-top:6px;">No medications logged for this day.</p>';
-        wrap.innerHTML = '<h4 style="margin:0 0 8px;font-size:13px;color:#374151;">Logged Medications</h4>' + loggedHtml;
-      }
     }
 
     async function takeDoseNow(scheduleId, doseNum, dateStr) {

@@ -15,7 +15,7 @@ VALID_FREQUENCIES = set(FREQ_LABELS)
 
 
 def _doses_per_day(frequency: str) -> int:
-    return {"once_daily": 1, "twice_daily": 2, "three_daily": 3, "prn": 0}[frequency]
+    return {"once_daily": 1, "twice_daily": 2, "three_daily": 3, "prn": 0}.get(frequency, 0)
 
 
 def _safe_meds_redirect(redirect_to: str) -> str:
@@ -469,8 +469,8 @@ def medications_today(d: str = "", w_end: str = ""):
     .dose-more {{ width:100%; }}
     .dose-more summary {{ cursor:pointer; font-size:11px; color:#6b7280; user-select:none; }}
     .dose-more-actions {{ margin-top:6px; display:flex; flex-direction:column; gap:6px; }}
-    .dose-time-form {{ display:flex; gap:6px; align-items:center; margin:0; flex-wrap:wrap; }}
-    .dose-time-input {{ border:1px solid #d1d5db; border-radius:7px; padding:6px 8px; font-size:12px; font-family:inherit; min-height:30px; width:98px; }}
+    .dose-time-form {{ display:flex; flex-direction:column; gap:6px; margin:0; }}
+    .dose-time-input {{ border:1px solid #d1d5db; border-radius:7px; padding:6px 8px; font-size:12px; font-family:inherit; min-height:30px; width:100%; box-sizing:border-box; }}
     @media (max-width: 1080px) {{
       .sections-grid {{ grid-template-columns:1fr; }}
     }}
@@ -483,7 +483,6 @@ def medications_today(d: str = "", w_end: str = ""):
       .day-select-mobile {{ display:block; flex:1; min-width:0; }}
       .med-row {{ flex-direction:column; }}
       .dose-actions {{ width:100%; min-width:0; }}
-      .dose-time-input {{ width:100%; }}
     }}
   </style>
 </head>
@@ -1196,6 +1195,12 @@ def api_schedules_create(
 ):
     if not name.strip():
         return JSONResponse({"ok": False, "error": "Medication name is required"}, status_code=400)
+    if len(name) > 120:
+        return JSONResponse({"ok": False, "error": "Medication name must be 120 characters or fewer"}, status_code=400)
+    if len(dose) > 80:
+        return JSONResponse({"ok": False, "error": "Dose must be 80 characters or fewer"}, status_code=400)
+    if len(notes) > 1000:
+        return JSONResponse({"ok": False, "error": "Notes must be 1000 characters or fewer"}, status_code=400)
     if frequency not in VALID_FREQUENCIES:
         return JSONResponse({"ok": False, "error": "Invalid frequency"}, status_code=400)
     try:
@@ -1233,6 +1238,12 @@ def api_schedules_edit(
 ):
     if not name.strip():
         return JSONResponse({"ok": False, "error": "Medication name is required"}, status_code=400)
+    if len(name) > 120:
+        return JSONResponse({"ok": False, "error": "Medication name must be 120 characters or fewer"}, status_code=400)
+    if len(dose) > 80:
+        return JSONResponse({"ok": False, "error": "Dose must be 80 characters or fewer"}, status_code=400)
+    if len(notes) > 1000:
+        return JSONResponse({"ok": False, "error": "Notes must be 1000 characters or fewer"}, status_code=400)
     if frequency not in VALID_FREQUENCIES:
         return JSONResponse({"ok": False, "error": "Invalid frequency"}, status_code=400)
     try:
@@ -1357,6 +1368,12 @@ def schedules_create(
 ):
     if not name.strip():
         return RedirectResponse(url="/medications/schedules/new?error=Medication+name+is+required", status_code=303)
+    if len(name) > 120:
+        return RedirectResponse(url="/medications/schedules/new?error=Medication+name+must+be+120+characters+or+fewer", status_code=303)
+    if len(dose) > 80:
+        return RedirectResponse(url="/medications/schedules/new?error=Dose+must+be+80+characters+or+fewer", status_code=303)
+    if len(notes) > 1000:
+        return RedirectResponse(url="/medications/schedules/new?error=Notes+must+be+1000+characters+or+fewer", status_code=303)
     if frequency not in VALID_FREQUENCIES:
         return RedirectResponse(url="/medications/schedules/new?error=Invalid+frequency", status_code=303)
     try:
@@ -1453,6 +1470,12 @@ def schedules_edit_post(
 ):
     if not name.strip():
         return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Medication+name+is+required", status_code=303)
+    if len(name) > 120:
+        return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Medication+name+must+be+120+characters+or+fewer", status_code=303)
+    if len(dose) > 80:
+        return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Dose+must+be+80+characters+or+fewer", status_code=303)
+    if len(notes) > 1000:
+        return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Notes+must+be+1000+characters+or+fewer", status_code=303)
     if frequency not in VALID_FREQUENCIES:
         return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Invalid+frequency", status_code=303)
     try:
@@ -1623,7 +1646,8 @@ def api_medications_adherence():
     uid = _current_user_id.get()
     with get_db() as conn:
         schedules = conn.execute(
-            "SELECT id, name, dose, frequency, start_date FROM medication_schedules WHERE user_id=? AND active=1",
+            "SELECT id, name, dose, frequency, start_date FROM medication_schedules"
+            " WHERE user_id=? ORDER BY active ASC, paused DESC",
             (uid,),
         ).fetchall()
         result = []
@@ -1767,7 +1791,7 @@ def api_doses_undo(payload: dict = Body(...)):
         return JSONResponse({"ok": False, "error": "Invalid date or dose"}, status_code=400)
     with get_db() as conn:
         sched = conn.execute(
-            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=? AND active=1 AND paused=0",
+            "SELECT frequency, start_date, created_at FROM medication_schedules WHERE id=? AND user_id=?",
             (schedule_id, uid),
         ).fetchone()
         if not sched:

@@ -1,6 +1,9 @@
 import html
+import re
 import secrets
 from time import time
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -72,8 +75,16 @@ def signup_post(
     new_password: str = Form(""),
     confirm_password: str = Form(""),
 ):
+    if len(username) > 60:
+        return RedirectResponse(url="/signup?error=Username+must+be+60+characters+or+fewer", status_code=303)
+    if len(email) > 254:
+        return RedirectResponse(url="/signup?error=Email+address+is+too+long", status_code=303)
+    if len(new_password) > 1000:
+        return RedirectResponse(url="/signup?error=Password+is+too+long", status_code=303)
     if not username.strip():
         return RedirectResponse(url="/signup?error=Username+is+required", status_code=303)
+    if email.strip() and not _EMAIL_RE.match(email.strip().lower()):
+        return RedirectResponse(url="/signup?error=Invalid+email+address", status_code=303)
     if len(new_password) < 8:
         return RedirectResponse(url="/signup?error=Password+must+be+at+least+8+characters", status_code=303)
     if new_password != confirm_password:
@@ -148,6 +159,8 @@ def login_post(request: Request, username: str = Form(""), password: str = Form(
     ip = request.client.host if request.client else "unknown"
     if not _is_login_allowed(ip):
         return RedirectResponse(url="/login?error=Too+many+attempts.+Please+wait+before+trying+again.", status_code=303)
+    if len(username) > 60 or len(password) > 1000:
+        return RedirectResponse(url="/login?error=Incorrect+username+or+password", status_code=303)
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM user_profile WHERE username = ?", (username.strip(),)
@@ -212,7 +225,11 @@ def forgot_password_post(request: Request, email: str = Form("")):
     ip = request.client.host if request.client else "unknown"
     if not _is_reset_allowed(ip):
         return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
+    if len(email) > 254:
+        return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
     email = email.strip().lower()
+    if email and not _EMAIL_RE.match(email):
+        return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
     if email:
         with get_db() as conn:
             patient = conn.execute(
@@ -295,6 +312,12 @@ def reset_password_post(
 ):
     if not token:
         return RedirectResponse(url="/forgot-password?error=Missing+reset+token", status_code=303)
+    if len(token) > 200:
+        return RedirectResponse(url="/forgot-password?error=Reset+link+expired+or+invalid", status_code=303)
+    if len(new_password) > 1000:
+        return RedirectResponse(
+            url=f"/reset-password?token={token}&error=Password+is+too+long", status_code=303
+        )
     with get_db() as conn:
         row = conn.execute(
             "SELECT user_id, expires_at FROM password_reset_tokens WHERE token = ?", (token,)

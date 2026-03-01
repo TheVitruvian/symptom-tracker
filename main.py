@@ -81,6 +81,10 @@ async def auth_middleware(request: Request, call_next):
             except ValueError:
                 patient_id = None
             if patient_id and _physician_owns_patient(physician_user["id"], patient_id):
+                if request.method not in ("GET", "HEAD", "OPTIONS"):
+                    if path.startswith("/api/"):
+                        return JSONResponse({"error": "Physicians cannot modify patient data"}, status_code=403)
+                    return RedirectResponse(url="/physician", status_code=303)
                 with get_db() as conn:
                     patient = conn.execute(
                         "SELECT name FROM user_profile WHERE id = ?", (patient_id,)
