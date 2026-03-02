@@ -260,6 +260,22 @@ def symptoms_chart():
       <h1 style="margin:0;">Health Report</h1>
       <button class="btn-print" onclick="printReport()">Print Report</button>
     </div>
+    <div class="screen-only controls-row" style="margin:12px 0 4px;">
+      <div class="control-group">
+        <label for="range-from" class="control-label">From</label>
+        <input type="date" id="range-from" onchange="updateChartRange()" class="control-input">
+      </div>
+      <div class="control-group">
+        <label for="range-to" class="control-label">To</label>
+        <input type="date" id="range-to" onchange="updateChartRange()" class="control-input">
+      </div>
+      <div class="preset-row">
+        <button id="chart-preset-7d" class="btn-control" onclick="setPreset(7)">7d</button>
+        <button id="chart-preset-30d" class="btn-control" onclick="setPreset(30)">30d</button>
+        <button id="chart-preset-90d" class="btn-control" onclick="setPreset(90)">90d</button>
+        <button id="chart-preset-all" class="btn-control" onclick="setPresetAll()">All</button>
+      </div>
+    </div>
 
     <div id="no-data" class="empty report-empty" style="display:none;">
       Not enough data yet &mdash; log at least 2 symptoms first.
@@ -268,30 +284,14 @@ def symptoms_chart():
     <div id="insights-wrapper" class="card section-card" style="display:none; padding:20px;"></div>
 
     <div id="chart-wrapper" class="card section-card" style="display:none; padding:24px;">
-      <div class="screen-only" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <div class="screen-only" style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
         <h2 class="section-title" style="margin-top:0;">Symptom Trend Graph</h2>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="smooth-btn" class="btn-smooth" onclick="toggleSmooth()" data-help="Smooth averages symptom severity over recent days to reduce short-term noise. Turn it off to see raw day-to-day changes.">Smooth</button>
+          <button id="bucket-btn" class="btn-bucket" onclick="toggleBucket()" data-help="Daily shows each day separately. Weekly groups data into week buckets (Mon-Sun) so overall trends are easier to read.">Daily</button>
           <button id="chart-expand-btn" class="btn-expand" onclick="openChartModal()">Expand</button>
           <button id="chart-close-btn" class="btn-expand" onclick="closeChartModal()">Close</button>
         </div>
-      </div>
-      <div class="screen-only controls-row" style="margin-bottom:14px;">
-        <div class="control-group">
-          <label for="range-from" class="control-label">From</label>
-          <input type="date" id="range-from" onchange="updateChartRange()" class="control-input">
-        </div>
-        <div class="control-group">
-          <label for="range-to" class="control-label">To</label>
-          <input type="date" id="range-to" onchange="updateChartRange()" class="control-input">
-        </div>
-        <div class="preset-row">
-          <button id="chart-preset-7d" class="btn-control" onclick="setPreset(7)">7d</button>
-          <button id="chart-preset-30d" class="btn-control" onclick="setPreset(30)">30d</button>
-          <button id="chart-preset-90d" class="btn-control" onclick="setPreset(90)">90d</button>
-          <button id="chart-preset-all" class="btn-control" onclick="setPresetAll()">All</button>
-        </div>
-        <button id="smooth-btn" class="btn-smooth" onclick="toggleSmooth()" data-help="Smooth averages symptom severity over recent days to reduce short-term noise. Turn it off to see raw day-to-day changes.">Smooth</button>
-        <button id="bucket-btn" class="btn-bucket" onclick="toggleBucket()" data-help="Daily shows each day separately. Weekly groups data into week buckets (Mon-Sun) so overall trends are easier to read.">Daily</button>
       </div>
       <div id="toggle-bar" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px;"></div>
       <canvas id="symptomChart"></canvas>
@@ -524,15 +524,15 @@ def symptoms_chart():
         return;
       }}
 
-      // Default range: last 30 days of data (use end_time for multi-day symptoms)
+      // Default range: last 30 days ending today
       const dates = [
         ..._allSymp.map(s => (s.end_time || s.timestamp).slice(0, 10)),
         ..._allMeds.map(m => m.timestamp.slice(0, 10)),
       ].sort();
       if (dates.length) {{
-        const latest = dates[dates.length - 1];
-        document.getElementById("range-from").value = addDays(latest, -29);
-        document.getElementById("range-to").value = latest;
+        const today = clientTodayISO();
+        document.getElementById("range-from").value = addDays(today, -29);
+        document.getElementById("range-to").value = today;
         _chartPreset = "30d";
         _patternsPreset = "30d";
       }}
@@ -560,7 +560,7 @@ def symptoms_chart():
       ].sort();
       if (dates.length) {{
         document.getElementById("range-from").value = dates[0];
-        document.getElementById("range-to").value = dates[dates.length - 1];
+        document.getElementById("range-to").value = clientTodayISO();
       }}
       _chartPreset = "all";
       syncChartPresetButtons();
@@ -606,24 +606,9 @@ def symptoms_chart():
       }});
     }}
 
-    function setCorrPreset(days) {{
-      const bounds = _dataDateBounds();
-      if (!bounds.max) return;
-      const to = new Date(bounds.max + "T00:00:00");
-      const from = new Date(+to - (days - 1) * 86400000);
-      _corrFrom = from.toISOString().slice(0, 10);
-      _corrTo = bounds.max;
-      _corrPreset = `${{days}}d`;
-      renderCorrelations();
-    }}
+    function setCorrPreset(days) {{ setPreset(days); }}
 
-    function setCorrAll() {{
-      const bounds = _dataDateBounds();
-      _corrFrom = bounds.min;
-      _corrTo = bounds.max;
-      _corrPreset = "all";
-      renderCorrelations();
-    }}
+    function setCorrAll() {{ setPresetAll(); }}
 
     function updateCorrRange() {{
       const fromEl = document.getElementById("corr-from");
@@ -638,24 +623,9 @@ def symptoms_chart():
       renderCorrelations();
     }}
 
-    function setMedCorrPreset(days) {{
-      const bounds = _dataDateBounds();
-      if (!bounds.max) return;
-      const to = new Date(bounds.max + "T00:00:00");
-      const from = new Date(+to - (days - 1) * 86400000);
-      _medCorrFrom = from.toISOString().slice(0, 10);
-      _medCorrTo = bounds.max;
-      _medCorrPreset = `${{days}}d`;
-      renderMedCorrelations();
-    }}
+    function setMedCorrPreset(days) {{ setPreset(days); }}
 
-    function setMedCorrAll() {{
-      const bounds = _dataDateBounds();
-      _medCorrFrom = bounds.min;
-      _medCorrTo = bounds.max;
-      _medCorrPreset = "all";
-      renderMedCorrelations();
-    }}
+    function setMedCorrAll() {{ setPresetAll(); }}
 
     function updateMedCorrRange() {{
       const fromEl = document.getElementById("med-corr-from");
@@ -670,24 +640,9 @@ def symptoms_chart():
       renderMedCorrelations();
     }}
 
-    function setPatternsPreset(days) {{
-      const bounds = _dataDateBounds();
-      if (!bounds.max) return;
-      const to = new Date(bounds.max + "T00:00:00");
-      const from = new Date(+to - (days - 1) * 86400000);
-      _patternsFrom = from.toISOString().slice(0, 10);
-      _patternsTo = bounds.max;
-      _patternsPreset = `${{days}}d`;
-      renderInsights();
-    }}
+    function setPatternsPreset(days) {{ setPreset(days); }}
 
-    function setPatternsAll() {{
-      const bounds = _dataDateBounds();
-      _patternsFrom = bounds.min;
-      _patternsTo = bounds.max;
-      _patternsPreset = "all";
-      renderInsights();
-    }}
+    function setPatternsAll() {{ setPresetAll(); }}
 
     function updatePatternsRange() {{
       const fromEl = document.getElementById("patterns-from");
@@ -806,21 +761,22 @@ def symptoms_chart():
         const d = m.timestamp.slice(0, 10);
         return (!from || d >= from) && (!to || d <= to);
       }});
-      if (!_patternsInitialized) {{
+      if (!_patternsInitialized || _chartPreset) {{
         _patternsFrom = from;
         _patternsTo = to;
+        _patternsPreset = _chartPreset || _patternsPreset;
         _patternsInitialized = true;
       }}
-      if (!_corrInitialized) {{
+      if (!_corrInitialized || _chartPreset) {{
         _corrFrom = from;
         _corrTo = to;
-        _corrPreset = "30d";
+        _corrPreset = _chartPreset || _corrPreset || "30d";
         _corrInitialized = true;
       }}
-      if (!_medCorrInitialized) {{
+      if (!_medCorrInitialized || _chartPreset) {{
         _medCorrFrom = from;
         _medCorrTo = to;
-        _medCorrPreset = "30d";
+        _medCorrPreset = _chartPreset || _medCorrPreset || "30d";
         _medCorrInitialized = true;
       }}
       const sampleInfo = buildSampleInfo(syms);
@@ -1175,29 +1131,7 @@ def symptoms_chart():
 
       const wrapper = document.getElementById("insights-wrapper");
       wrapper.style.display = "block";
-      const p7Class = _patternsPreset === "7d" ? "btn-control btn-control-active" : "btn-control";
-      const p30Class = _patternsPreset === "30d" ? "btn-control btn-control-active" : "btn-control";
-      const p90Class = _patternsPreset === "90d" ? "btn-control btn-control-active" : "btn-control";
-      const pallClass = _patternsPreset === "all" ? "btn-control btn-control-active" : "btn-control";
       let html = `<h2 class="section-title" style="margin-top:0;">Key Patterns</h2>`;
-      html += `<div class="screen-only controls-row" style="margin-bottom:12px;">`
-           + `<div class="control-group">`
-           + `<label for="patterns-from" class="control-label">From</label>`
-           + `<input type="date" id="patterns-from" value="${{_patternsFrom}}" onchange="updatePatternsRange()"`
-           + ` class="control-input" max="${{clientTodayISO()}}">`
-           + `</div>`
-           + `<div class="control-group">`
-           + `<label for="patterns-to" class="control-label">To</label>`
-           + `<input type="date" id="patterns-to" value="${{_patternsTo}}" onchange="updatePatternsRange()"`
-           + ` class="control-input" max="${{clientTodayISO()}}">`
-           + `</div>`
-           + `<div class="preset-row">`
-           + `<button class="${{p7Class}}" onclick="setPatternsPreset(7)">7d</button>`
-           + `<button class="${{p30Class}}" onclick="setPatternsPreset(30)">30d</button>`
-           + `<button class="${{p90Class}}" onclick="setPatternsPreset(90)">90d</button>`
-           + `<button class="${{pallClass}}" onclick="setPatternsAll()">All</button>`
-           + `</div>`
-           + `</div>`;
       if (!insights.length) {{
         html += `<p class="empty" style="margin:6px 0 0;">No strong patterns found for this date range.</p>`;
         wrapper.innerHTML = html;
@@ -1232,24 +1166,7 @@ def symptoms_chart():
         text-align:center; white-space:nowrap; background:#f5f5f5;"`;
       const rowHeadStyle = `style="padding:6px 10px; font-size:12px; font-weight:600;
         text-align:right; white-space:nowrap; background:#f5f5f5;"`;
-      const p7Class = _corrPreset === "7d" ? "btn-control btn-control-active" : "btn-control";
-      const p30Class = _corrPreset === "30d" ? "btn-control btn-control-active" : "btn-control";
-      const p90Class = _corrPreset === "90d" ? "btn-control btn-control-active" : "btn-control";
-      const pallClass = _corrPreset === "all" ? "btn-control btn-control-active" : "btn-control";
-
       let html = `<table style="border-collapse:collapse; width:100%;">`;
-      html = `<div class="screen-only controls-row" style="margin-bottom:10px;">`
-        + `<div class="control-group"><label for="corr-from" class="control-label">From</label>`
-        + `<input type="date" id="corr-from" class="control-input" value="${{_corrFrom}}" onchange="updateCorrRange()" max="${{clientTodayISO()}}"></div>`
-        + `<div class="control-group"><label for="corr-to" class="control-label">To</label>`
-        + `<input type="date" id="corr-to" class="control-input" value="${{_corrTo}}" onchange="updateCorrRange()" max="${{clientTodayISO()}}"></div>`
-        + `<div class="preset-row">`
-        + `<button class="${{p7Class}}" onclick="setCorrPreset(7)">7d</button>`
-        + `<button class="${{p30Class}}" onclick="setCorrPreset(30)">30d</button>`
-        + `<button class="${{p90Class}}" onclick="setCorrPreset(90)">90d</button>`
-        + `<button class="${{pallClass}}" onclick="setCorrAll()">All</button>`
-        + `</div></div>`
-        + `<table style="border-collapse:collapse; width:100%;">`;
       html += `<thead><tr><th ${{thStyle}}></th>`;
       for (const name of names) html += `<th ${{thStyle}}>${{escHtml(name)}}</th>`;
       html += `</tr></thead><tbody>`;
@@ -1292,23 +1209,7 @@ def symptoms_chart():
         text-align:center; white-space:nowrap; background:#f5f5f5;"`;
       const rowHeadStyle = `style="padding:6px 10px; font-size:12px; font-weight:600;
         text-align:right; white-space:nowrap; background:#f5f5f5;"`;
-      const p7Class = _medCorrPreset === "7d" ? "btn-control btn-control-active" : "btn-control";
-      const p30Class = _medCorrPreset === "30d" ? "btn-control btn-control-active" : "btn-control";
-      const p90Class = _medCorrPreset === "90d" ? "btn-control btn-control-active" : "btn-control";
-      const pallClass = _medCorrPreset === "all" ? "btn-control btn-control-active" : "btn-control";
-
-      let html = `<div class="screen-only controls-row" style="margin-bottom:10px;">`
-        + `<div class="control-group"><label for="med-corr-from" class="control-label">From</label>`
-        + `<input type="date" id="med-corr-from" class="control-input" value="${{_medCorrFrom}}" onchange="updateMedCorrRange()" max="${{clientTodayISO()}}"></div>`
-        + `<div class="control-group"><label for="med-corr-to" class="control-label">To</label>`
-        + `<input type="date" id="med-corr-to" class="control-input" value="${{_medCorrTo}}" onchange="updateMedCorrRange()" max="${{clientTodayISO()}}"></div>`
-        + `<div class="preset-row">`
-        + `<button class="${{p7Class}}" onclick="setMedCorrPreset(7)">7d</button>`
-        + `<button class="${{p30Class}}" onclick="setMedCorrPreset(30)">30d</button>`
-        + `<button class="${{p90Class}}" onclick="setMedCorrPreset(90)">90d</button>`
-        + `<button class="${{pallClass}}" onclick="setMedCorrAll()">All</button>`
-        + `</div></div>`
-        + `<table style="border-collapse:collapse; width:100%;">`;
+      let html = `<table style="border-collapse:collapse; width:100%;">`;
       html += `<thead><tr><th ${{thStyle}}></th>`;
       for (const s of symp_names) html += `<th ${{thStyle}}>${{escHtml(s)}}</th>`;
       html += `</tr></thead><tbody>`;
@@ -1357,7 +1258,7 @@ def symptoms_calendar():
       padding: 5px 6px; border: 1px solid #e5e7eb; background: #fff; }
     .cal-grid td.other-month { background: #f9fafb; }
     .cal-grid td.other-month .day-num { color: #d1d5db; }
-    .cal-grid td.today { outline: 2px solid #3b82f6; outline-offset: -2px; }
+    .cal-grid td.today { outline: 2px solid #7c3aed; outline-offset: -2px; }
     .cal-grid td.has-data { cursor: pointer; }
     .cal-grid td.has-data:hover { background: #f0f9ff; }
     .cal-grid td.selected { background: #eff6ff; }

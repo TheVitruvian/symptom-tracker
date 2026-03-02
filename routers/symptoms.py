@@ -189,7 +189,7 @@ def symptoms_create(
             (name.strip(), severity, notes.strip(), timestamp, end_time, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/symptoms", status_code=303)
+    return RedirectResponse(url="/symptoms/chart?_toast=Symptom+logged", status_code=303)
 
 
 @router.post("/symptoms/delete")
@@ -202,7 +202,7 @@ def symptoms_delete(id: int = Form(...)):
             (deleted_at, id, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/symptoms", status_code=303)
+    return RedirectResponse(url="/symptoms/chart?_toast=Symptom+updated", status_code=303)
 
 
 @router.get("/symptoms/{sym_id}/edit", response_class=HTMLResponse)

@@ -921,7 +921,7 @@ def schedules_list():
   <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px;">
       <h1 style="margin:0;">Schedules</h1>
-      <button id="sched-add-btn" class="btn-primary" type="button" style="background:#7c3aed;font-size:14px;padding:7px 16px;">+ Add Schedule</button>
+      <button id="sched-add-btn" class="btn-primary" type="button" style="font-size:14px;padding:7px 16px;">+ Add Schedule</button>
     </div>
     {_meds_subnav('schedules')}
     <div class="sched-shell">
@@ -955,7 +955,7 @@ def schedules_list():
               <textarea id="sched-notes" name="notes" rows="2" placeholder="Any additional details..."></textarea>
             </div>
             <div style="display:flex;gap:10px;align-items:center;">
-              <button class="btn-primary" id="sched-save-btn" style="background:#7c3aed;" type="submit">Save Schedule</button>
+              <button class="btn-primary" id="sched-save-btn" type="submit">Save Schedule</button>
               <button type="button" id="sched-cancel-btn" class="back" style="border:none;background:none;cursor:pointer;">Cancel</button>
             </div>
           </form>
@@ -1350,7 +1350,7 @@ def schedules_new(error: str = ""):
           <label for="notes">Notes <span style="color:#aaa;font-weight:400">(optional)</span></label>
           <textarea id="notes" name="notes" rows="2" placeholder="Any additional details..."></textarea>
         </div>
-        <button class="btn-primary" style="background:#7c3aed;" type="submit">Add Schedule</button>
+        <button class="btn-primary" type="submit">Add Schedule</button>
       </form>
     </div>
   </div>
@@ -1392,7 +1392,7 @@ def schedules_create(
             (uid, name.strip(), dose.strip(), notes.strip(), frequency, start_date, created_at),
         )
         conn.commit()
-    return RedirectResponse(url="/medications/schedules", status_code=303)
+    return RedirectResponse(url="/medications/schedules?_toast=Schedule+added", status_code=303)
 
 
 @router.get("/medications/schedules/{sched_id}/edit", response_class=HTMLResponse)
@@ -1449,7 +1449,7 @@ def schedules_edit_get(sched_id: int, error: str = ""):
           <textarea id="notes" name="notes" rows="2">{html.escape(s['notes'])}</textarea>
         </div>
         <div style="display:flex;gap:12px;align-items:center;">
-          <button class="btn-primary" style="background:#7c3aed;" type="submit">Save Changes</button>
+          <button class="btn-primary" type="submit">Save Changes</button>
           <a href="/medications/schedules" class="back">Cancel</a>
         </div>
       </form>
@@ -1492,7 +1492,7 @@ def schedules_edit_post(
             (name.strip(), dose.strip(), notes.strip(), frequency, start_date, sched_id, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/medications/schedules", status_code=303)
+    return RedirectResponse(url="/medications/schedules?_toast=Schedule+updated", status_code=303)
 
 
 @router.post("/medications/schedules/{sched_id}/deactivate")
@@ -1503,7 +1503,7 @@ def schedules_deactivate(sched_id: int):
             "UPDATE medication_schedules SET active=0 WHERE id=? AND user_id=?", (sched_id, uid)
         )
         conn.commit()
-    return RedirectResponse(url="/medications/schedules", status_code=303)
+    return RedirectResponse(url="/medications/schedules?_toast=Schedule+removed", status_code=303)
 
 
 # ── Dose logging actions ──────────────────────────────────────────────────────

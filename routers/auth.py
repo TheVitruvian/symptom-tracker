@@ -8,7 +8,7 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from config import SESSION_COOKIE_NAME, RESET_TOKEN_TTL_SECONDS
+from config import SESSION_COOKIE_NAME, RESET_TOKEN_TTL_SECONDS, VERIFICATION_TOKEN_TTL_SECONDS
 from db import get_db
 from security import (
     _hash_password,
@@ -17,8 +17,14 @@ from security import (
     _has_any_patient,
     _get_authenticated_user,
     _send_reset_email,
+    _send_verification_email,
     _is_login_allowed,
     _is_reset_allowed,
+    _is_username_login_allowed,
+    _record_login_failure,
+    _clear_username_lockout,
+    _audit_log,
+    _password_meets_complexity,
 )
 from ui import PAGE_STYLE
 
@@ -45,9 +51,9 @@ def signup_get(error: str = ""):
           placeholder="Your username" required autocomplete="username">
       </div>
       <div class="form-group">
-        <label for="email">Email <span style="color:#aaa;font-weight:400">(optional — for password reset)</span></label>
+        <label for="email">Email</label>
         <input type="email" id="email" name="email"
-          placeholder="you@example.com" autocomplete="email">
+          placeholder="you@example.com" required autocomplete="email">
       </div>
       <div class="form-group">
         <label for="new_password">Password</label>
@@ -83,10 +89,13 @@ def signup_post(
         return RedirectResponse(url="/signup?error=Password+is+too+long", status_code=303)
     if not username.strip():
         return RedirectResponse(url="/signup?error=Username+is+required", status_code=303)
-    if email.strip() and not _EMAIL_RE.match(email.strip().lower()):
+    if not email.strip():
+        return RedirectResponse(url="/signup?error=Email+is+required", status_code=303)
+    if not _EMAIL_RE.match(email.strip().lower()):
         return RedirectResponse(url="/signup?error=Invalid+email+address", status_code=303)
-    if len(new_password) < 8:
-        return RedirectResponse(url="/signup?error=Password+must+be+at+least+8+characters", status_code=303)
+    pw_ok, pw_err = _password_meets_complexity(new_password)
+    if not pw_ok:
+        return RedirectResponse(url=f"/signup?error={pw_err.replace(' ', '+')}", status_code=303)
     if new_password != confirm_password:
         return RedirectResponse(url="/signup?error=Passwords+do+not+match", status_code=303)
     with get_db() as conn:
@@ -97,13 +106,29 @@ def signup_post(
             return RedirectResponse(url="/signup?error=Username+already+taken", status_code=303)
     pw_hash = _hash_password(new_password)
     share_code = secrets.token_hex(4).upper()
+    ip = request.client.host if request.client else "unknown"
+    email_clean = email.strip().lower()
     with get_db() as conn:
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO user_profile (username, email, password_hash, share_code) VALUES (?, ?, ?, ?)",
-            (username.strip(), email.strip().lower(), pw_hash, share_code),
+            (username.strip(), email_clean, pw_hash, share_code),
         )
+        new_user_id = cursor.lastrowid
         conn.commit()
-    resp = RedirectResponse(url="/", status_code=303)
+    if email_clean:
+        verify_token = secrets.token_urlsafe(32)
+        verify_expires = int(time()) + VERIFICATION_TOKEN_TTL_SECONDS
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO email_verification_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
+                (verify_token, new_user_id, verify_expires),
+            )
+            conn.commit()
+        base = str(request.base_url).rstrip("/")
+        verify_url = f"{base}/verify-email?token={verify_token}"
+        _send_verification_email(email_clean, verify_url)
+    _audit_log("signup", username=username.strip(), ip_address=ip)
+    resp = RedirectResponse(url="/onboarding/1", status_code=303)
     _set_session_cookie(resp, request, username.strip(), pw_hash)
     return resp
 
@@ -140,13 +165,13 @@ def login_get(request: Request, error: str = "", success: str = ""):
       <button type="submit" class="btn-primary">Log In</button>
     </form>
     <p style="margin-top:16px; font-size:13px; color:#6b7280;">
-      <a href="/forgot-password" style="color:#3b82f6;">Forgot your password?</a>
+      <a href="/forgot-password" style="color:#7c3aed;">Forgot your password?</a>
     </p>
     <p style="margin-top:8px; font-size:13px; color:#6b7280;">
-      No account yet? <a href="/signup" style="color:#3b82f6;">Sign up</a>
+      No account yet? <a href="/signup" style="color:#7c3aed;">Sign up</a>
     </p>
     <p style="margin-top:8px; font-size:13px; color:#6b7280;">
-      Are you a physician? <a href="/physician/login" style="color:#3b82f6;">Physician login</a>
+      Are you a physician? <a href="/physician/login" style="color:#7c3aed;">Physician login</a>
     </p>
   </div>
 </body>
@@ -158,6 +183,10 @@ def login_get(request: Request, error: str = "", success: str = ""):
 def login_post(request: Request, username: str = Form(""), password: str = Form("")):
     ip = request.client.host if request.client else "unknown"
     if not _is_login_allowed(ip):
+        _audit_log("login_rate_limited_ip", username=username.strip()[:60], ip_address=ip)
+        return RedirectResponse(url="/login?error=Too+many+attempts.+Please+wait+before+trying+again.", status_code=303)
+    if not _is_username_login_allowed(username.strip()):
+        _audit_log("login_account_locked", username=username.strip()[:60], ip_address=ip)
         return RedirectResponse(url="/login?error=Too+many+attempts.+Please+wait+before+trying+again.", status_code=303)
     if len(username) > 60 or len(password) > 1000:
         return RedirectResponse(url="/login?error=Incorrect+username+or+password", status_code=303)
@@ -166,16 +195,25 @@ def login_post(request: Request, username: str = Form(""), password: str = Form(
             "SELECT * FROM user_profile WHERE username = ?", (username.strip(),)
         ).fetchone()
     if not row or not row["password_hash"]:
+        _record_login_failure(username.strip())
+        _audit_log("login_failure", username=username.strip(), ip_address=ip, details="user not found")
         return RedirectResponse(url="/login?error=Incorrect+username+or+password", status_code=303)
     if not _verify_password(password, row["password_hash"]):
+        _record_login_failure(username.strip())
+        _audit_log("login_failure", user_id=row["id"], username=row["username"], ip_address=ip)
         return RedirectResponse(url="/login?error=Incorrect+username+or+password", status_code=303)
+    _audit_log("login_success", user_id=row["id"], username=row["username"], ip_address=ip)
     resp = RedirectResponse(url="/", status_code=303)
     _set_session_cookie(resp, request, row["username"], row["password_hash"])
     return resp
 
 
 @router.post("/logout")
-def logout():
+def logout(request: Request):
+    user = _get_authenticated_user(request)
+    if user:
+        ip = request.client.host if request.client else "unknown"
+        _audit_log("logout", user_id=user["id"], username=user["username"], ip_address=ip)
     resp = RedirectResponse(url="/login", status_code=303)
     resp.delete_cookie(SESSION_COOKIE_NAME)
     return resp
@@ -212,7 +250,7 @@ def forgot_password_get(sent: int = 0, error: str = ""):
       <button type="submit" class="btn-primary">Send Reset Link</button>
     </form>
     <p style="margin-top:16px; font-size:13px; color:#6b7280;">
-      <a href="/login" style="color:#3b82f6;">&larr; Back to login</a>
+      <a href="/login" style="color:#7c3aed;">&larr; Back to login</a>
     </p>
   </div>
 </body>
@@ -326,9 +364,10 @@ def reset_password_post(
         return RedirectResponse(
             url="/forgot-password?error=Reset+link+expired+or+invalid", status_code=303
         )
-    if len(new_password) < 8:
+    pw_ok, pw_err = _password_meets_complexity(new_password)
+    if not pw_ok:
         return RedirectResponse(
-            url=f"/reset-password?token={token}&error=Password+must+be+at+least+8+characters",
+            url=f"/reset-password?token={token}&error={pw_err.replace(' ', '+')}",
             status_code=303,
         )
     if new_password != confirm_password:
@@ -338,10 +377,46 @@ def reset_password_post(
         )
     new_hash = _hash_password(new_password)
     with get_db() as conn:
+        profile = conn.execute(
+            "SELECT username FROM user_profile WHERE id = ?", (row["user_id"],)
+        ).fetchone()
         conn.execute(
             "UPDATE user_profile SET password_hash = ? WHERE id = ?",
             (new_hash, row["user_id"]),
         )
         conn.execute("DELETE FROM password_reset_tokens WHERE token = ?", (token,))
         conn.commit()
+    if profile:
+        _clear_username_lockout(profile["username"])
+    _audit_log("password_reset", user_id=row["user_id"])
     return RedirectResponse(url="/login?success=Password+updated.+Please+log+in.", status_code=303)
+
+
+@router.get("/verify-email", response_class=HTMLResponse)
+def verify_email_get(request: Request, token: str = ""):
+    if not token or len(token) > 200:
+        return RedirectResponse(url="/login?error=Invalid+verification+link", status_code=303)
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT user_id, expires_at FROM email_verification_tokens WHERE token = ?", (token,)
+        ).fetchone()
+    if not row or row["expires_at"] < int(time()):
+        return f"""<!DOCTYPE html>
+<html>
+<head>{PAGE_STYLE}<title>Verify Email</title></head>
+<body>
+  <div class="container">
+    <h1>Email Verification</h1>
+    <div class="alert">This verification link has expired or is invalid. You can request a new one
+      from your <a href="/profile" style="color:#b91c1c;">profile page</a>.
+    </div>
+  </div>
+</body>
+</html>
+"""
+    with get_db() as conn:
+        conn.execute("UPDATE user_profile SET email_verified = 1 WHERE id = ?", (row["user_id"],))
+        conn.execute("DELETE FROM email_verification_tokens WHERE token = ?", (token,))
+        conn.commit()
+    _audit_log("email_verified", user_id=row["user_id"])
+    return RedirectResponse(url="/login?success=Email+verified.+You+can+now+log+in.", status_code=303)

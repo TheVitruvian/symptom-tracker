@@ -100,6 +100,18 @@ def init_db():
             conn.execute(
                 "ALTER TABLE user_profile ADD COLUMN email TEXT NOT NULL DEFAULT ''"
             )
+        if "email_verified" not in cols:
+            conn.execute(
+                "ALTER TABLE user_profile ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0"
+            )
+        if "onboarding_complete" not in cols:
+            conn.execute(
+                "ALTER TABLE user_profile ADD COLUMN onboarding_complete INTEGER NOT NULL DEFAULT 0"
+            )
+            # Existing users have already completed onboarding
+            conn.execute(
+                "UPDATE user_profile SET onboarding_complete = 1 WHERE password_hash != ''"
+            )
         # Migrate symptoms: add user_id and end_time columns
         symp_cols = [row[1] for row in conn.execute("PRAGMA table_info(symptoms)")]
         if "user_id" not in symp_cols:
@@ -186,6 +198,34 @@ def init_db():
                 expires_at INTEGER NOT NULL
             )
         """)
+        # Email verification tokens
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS email_verification_tokens (
+                token      TEXT    PRIMARY KEY,
+                user_id    INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            )
+        """)
+        # Security audit log
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS security_audit_log (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT    NOT NULL,
+                user_id    INTEGER,
+                username   TEXT    NOT NULL DEFAULT '',
+                ip_address TEXT    NOT NULL DEFAULT '',
+                details    TEXT    NOT NULL DEFAULT '',
+                created_at TEXT    NOT NULL
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_log_username"
+            " ON security_audit_log(username, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_audit_log_created"
+            " ON security_audit_log(created_at DESC)"
+        )
         # Indexes for common query patterns (all filtered by user_id)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_symptoms_user_id ON symptoms(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_medications_user_id ON medications(user_id)")

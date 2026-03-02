@@ -2,7 +2,7 @@ import html
 import re
 from datetime import datetime
 
-from config import _current_user_id, _physician_ctx, CSRF_COOKIE_NAME, FREQ_LABELS
+from config import _current_user_id, _physician_ctx, CSRF_COOKIE_NAME, FREQ_LABELS, INACTIVITY_TIMEOUT_MS
 from db import get_db
 
 
@@ -131,7 +131,7 @@ def _sidebar() -> str:
     {divider}
     <div style="display:flex;gap:6px;margin-top:4px;">
       <a href="/profile" style="flex:1;text-align:center;text-decoration:none;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:7px;font-size:12px;color:#374151;font-weight:500;">Full profile</a>
-      <button onclick="sbToggle(true)" style="flex:1;background:#1e3a8a;color:#fff;border:none;border-radius:6px;padding:7px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit;">&#9998; Edit</button>
+      <button onclick="sbToggle(true)" style="flex:1;background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:7px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit;">&#9998; Edit</button>
     </div>
   </div>
   <form id="sb-edit" style="display:none;" onsubmit="sbSave(event)">
@@ -143,7 +143,7 @@ def _sidebar() -> str:
       <textarea name="conditions" id="sb-cond-i" rows="3" {ta}>{cond_esc}</textarea>
       <span style="font-size:11px;color:#9ca3af;margin-top:3px;display:block;">Separate with commas</span></div>
     <div style="display:flex;gap:6px;">
-      <button type="submit" style="flex:1;background:#1e3a8a;color:#fff;border:none;border-radius:6px;padding:7px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Save</button>
+      <button type="submit" style="flex:1;background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:7px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;">Save</button>
       <button type="button" onclick="sbToggle(false)" style="flex:1;background:none;border:1px solid #e5e7eb;border-radius:6px;padding:7px;font-size:13px;color:#6b7280;cursor:pointer;font-family:inherit;">Cancel</button>
     </div>
   </form>
@@ -246,7 +246,7 @@ def _nav_bar(active: str = "") -> str:
         '<a href="/symptoms/calendar?open_symptom_modal=1" style="background:#fff; color:#1e3a8a; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:6px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Symptom</a>'
-        '<a href="/medications/today" style="background:#a855f7; color:#fff; text-decoration:none;'
+        '<a href="/medications/today" style="background:#7c3aed; color:#fff; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:6px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Medication</a>'
         + dlnk("/profile", "Profile", "profile")
@@ -270,7 +270,7 @@ def _nav_bar(active: str = "") -> str:
         '<a href="/symptoms/calendar?open_symptom_modal=1" style="background:#fff; color:#1e3a8a; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:7px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Symptom</a>'
-        '<a href="/medications/today" style="background:#a855f7; color:#fff; text-decoration:none;'
+        '<a href="/medications/today" style="background:#7c3aed; color:#fff; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:7px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Medication</a>'
         f'<form method="post" action="{logout_action}" style="margin:0;">'
@@ -282,6 +282,43 @@ def _nav_bar(active: str = "") -> str:
         '</div>'
         '</nav>'
         + _sidebar()
+        + f"""<script>
+(function(){{
+  var TIMEOUT={INACTIVITY_TIMEOUT_MS},WARN=2*60*1000,logoutUrl="{logout_action}";
+  var timer,warnTimer,modal;
+  function removeWarning(){{if(modal){{modal.remove();modal=null;}}}}
+  function doLogout(){{
+    removeWarning();
+    var f=document.createElement('form');f.method='post';f.action=logoutUrl;
+    document.body.appendChild(f);f.submit();
+  }}
+  function showWarning(){{
+    modal=document.createElement('div');
+    modal.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;'
+      +'background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    modal.innerHTML='<div style="background:#fff;border-radius:12px;padding:32px 28px;'
+      +'max-width:340px;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.25);">'
+      +'<p style="font-size:18px;font-weight:700;margin:0 0 10px;">Still there?</p>'
+      +'<p style="font-size:14px;color:#6b7280;margin:0 0 22px;">'
+      +'You will be logged out in 2 minutes due to inactivity.</p>'
+      +'<button onclick="window._inactivityReset&&window._inactivityReset()" '
+      +'style="background:#7c3aed;color:#fff;border:none;border-radius:8px;'
+      +'padding:10px 24px;font-size:14px;font-weight:600;cursor:pointer;">Stay Logged In</button>'
+      +'</div>';
+    document.body.appendChild(modal);
+  }}
+  function resetTimers(){{
+    clearTimeout(timer);clearTimeout(warnTimer);removeWarning();
+    warnTimer=setTimeout(showWarning,TIMEOUT-WARN);
+    timer=setTimeout(doLogout,TIMEOUT);
+  }}
+  window._inactivityReset=resetTimers;
+  ['mousemove','keydown','click','touchstart','scroll'].forEach(function(e){{
+    document.addEventListener(e,resetTimers,{{passive:true,capture:true}});
+  }});
+  resetTimers();
+}})();
+</script>"""
     )
 
 
@@ -305,25 +342,25 @@ PAGE_STYLE = """
                   border-radius: 6px; padding: 4px 10px; font-size: 13px; color: #888;
                   cursor: pointer; }
     .btn-delete:hover { background: #fee2e2; border-color: #ef4444; color: #ef4444; }
-    .btn-edit { font-size: 13px; color: #3b82f6; border: 1px solid #d1d5db;
+    .btn-edit { font-size: 13px; color: #7c3aed; border: 1px solid #d1d5db;
                 border-radius: 6px; padding: 4px 10px; text-decoration: none; display: inline-block; }
-    .btn-edit:hover { background: #eff6ff; border-color: #3b82f6; }
-    .btn-primary { background: #3b82f6; color: #fff; border: none; border-radius: 8px;
+    .btn-edit:hover { background: #f5f3ff; border-color: #7c3aed; }
+    .btn-primary { background: #7c3aed; color: #fff; border: none; border-radius: 8px;
                    padding: 10px 22px; font-size: 15px; cursor: pointer; font-weight: 600; }
-    .btn-primary:hover { background: #2563eb; }
-    .btn-log { display: inline-block; background: #3b82f6; color: #fff; text-decoration: none;
+    .btn-primary:hover { background: #6d28d9; }
+    .btn-log { display: inline-block; background: #7c3aed; color: #fff; text-decoration: none;
                border-radius: 8px; padding: 8px 16px; font-size: 14px; font-weight: 600;
                margin-bottom: 8px; }
-    .btn-log:hover { background: #2563eb; }
-    .back { font-size: 14px; color: #3b82f6; text-decoration: none; }
+    .btn-log:hover { background: #6d28d9; }
+    .back { font-size: 14px; color: #7c3aed; text-decoration: none; }
     .back:hover { text-decoration: underline; }
     .form-group { margin-bottom: 20px; }
     label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; }
     input[type=text], input[type=password], input[type=email], input[type=date], input[type=datetime-local], textarea { width: 100%; box-sizing: border-box; border: 1px solid #d1d5db;
       border-radius: 6px; padding: 8px 10px; font-size: 15px; font-family: inherit; }
-    input[type=text]:focus, input[type=password]:focus, input[type=email]:focus, input[type=date]:focus, input[type=datetime-local]:focus, textarea:focus { outline: 2px solid #3b82f6; border-color: transparent; }
+    input[type=text]:focus, input[type=password]:focus, input[type=email]:focus, input[type=date]:focus, input[type=datetime-local]:focus, textarea:focus { outline: 2px solid #7c3aed; border-color: transparent; }
     .slider-row { display: flex; align-items: center; gap: 14px; }
-    input[type=range] { flex: 1; accent-color: #3b82f6; height: 6px; cursor: pointer; }
+    input[type=range] { flex: 1; accent-color: #7c3aed; height: 6px; cursor: pointer; }
     .sev-badge { width: 42px; height: 42px; border-radius: 50%; color: #fff; font-weight: 700;
                  font-size: 18px; display: flex; align-items: center; justify-content: center;
                  flex-shrink: 0; transition: background 0.2s; }
@@ -332,8 +369,6 @@ PAGE_STYLE = """
     .alert { background: #fee2e2; border: 1px solid #fca5a5; color: #b91c1c;
              border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
     .empty { color: #888; font-style: italic; margin-top: 16px; }
-    .btn-primary.med-submit { background: #7c3aed; }
-    .btn-primary.med-submit:hover { background: #6d28d9; }
     /* ── Nav responsive ────────────────────────────────────────────────── */
     .nav-desktop-links { flex: 1; display: flex; gap: 20px; }
     .nav-desktop-actions { display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
@@ -361,5 +396,47 @@ PAGE_STYLE = """
       .sidebar { display: none; }
       body.has-sidebar .container { margin-left: auto; margin-right: auto; }
     }
+    /* ── Toast notifications ─────────────────────────────────────────── */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%) translateY(8px);
+      padding: 11px 20px; border-radius: 8px; font-size: 14px; font-weight: 500;
+      z-index: 8000; box-shadow: 0 4px 16px rgba(0,0,0,.18);
+      opacity: 0; transition: opacity .2s, transform .2s;
+      max-width: min(360px, calc(100vw - 32px));
+      text-align: center; pointer-events: none; color: #fff;
+    }
+    .toast-success { background: #166534; }
+    .toast-error   { background: #991b1b; }
+    .toast-visible { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
   </style>
+  <script>
+    (function() {
+      function showToast(msg, type) {
+        var el = document.createElement('div');
+        el.className = 'toast toast-' + (type || 'success');
+        el.textContent = msg;
+        document.body.appendChild(el);
+        requestAnimationFrame(function() { requestAnimationFrame(function() {
+          el.classList.add('toast-visible');
+          var dur = type === 'error' ? 5000 : 3500;
+          setTimeout(function() {
+            el.style.transition = 'opacity .4s, transform .4s';
+            el.classList.remove('toast-visible');
+            setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 400);
+          }, dur);
+        }); });
+      }
+      window._showToast = showToast;
+      document.addEventListener('DOMContentLoaded', function() {
+        var params = new URLSearchParams(location.search);
+        var msg = params.get('_toast'), type = params.get('_toast_type') || 'success';
+        if (!msg) return;
+        params.delete('_toast'); params.delete('_toast_type');
+        var qs = params.toString();
+        history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+        showToast(msg, type);
+      });
+    })();
+  </script>
 """

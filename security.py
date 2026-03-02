@@ -6,6 +6,7 @@ import secrets
 import smtplib
 import threading
 from collections import defaultdict
+from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from time import time
 from typing import Optional
@@ -32,11 +33,14 @@ _login_buckets: dict[str, list[float]] = defaultdict(list)
 _reset_buckets: dict[str, list[float]] = defaultdict(list)
 _physician_login_buckets: dict[str, list[float]] = defaultdict(list)
 _physician_signup_buckets: dict[str, list[float]] = defaultdict(list)
+_username_login_buckets: dict[str, list[float]] = defaultdict(list)
 
 _LOGIN_WINDOW = 300   # 5 minutes
 _LOGIN_MAX = 10       # attempts per window per IP
 _RESET_WINDOW = 900   # 15 minutes
 _RESET_MAX = 5        # attempts per window per IP
+_USERNAME_LOCK_WINDOW = 300  # 5 minutes
+_USERNAME_LOCK_MAX = 5       # failed attempts per window per username
 
 
 def _check_rate_limit(bucket: dict, ip: str, window: int, max_attempts: int) -> bool:
@@ -64,6 +68,77 @@ def _is_physician_login_allowed(ip: str) -> bool:
 
 def _is_physician_signup_allowed(ip: str) -> bool:
     return _check_rate_limit(_physician_signup_buckets, ip, _RESET_WINDOW, _RESET_MAX)
+
+
+def _is_username_login_allowed(username: str) -> bool:
+    """Return True if the username has not exceeded the per-account failed-login limit."""
+    now = time()
+    with _rate_lock:
+        recent = [t for t in _username_login_buckets[username.lower()] if now - t < _USERNAME_LOCK_WINDOW]
+        _username_login_buckets[username.lower()] = recent
+        return len(recent) < _USERNAME_LOCK_MAX
+
+
+def _record_login_failure(username: str) -> None:
+    """Record a failed login attempt for per-username lockout tracking."""
+    now = time()
+    with _rate_lock:
+        _username_login_buckets[username.lower()].append(now)
+
+
+def _clear_username_lockout(username: str) -> None:
+    """Clear the failed-login bucket for a username (e.g. after a successful password reset)."""
+    with _rate_lock:
+        _username_login_buckets.pop(username.lower(), None)
+
+
+# ---------------------------------------------------------------------------
+# Audit logging
+# ---------------------------------------------------------------------------
+
+def _audit_log(
+    event_type: str,
+    user_id: Optional[int] = None,
+    username: str = "",
+    ip_address: str = "",
+    details: str = "",
+) -> None:
+    """Write a security event to the audit log table. Failures are logged but not raised."""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO security_audit_log"
+                " (event_type, user_id, username, ip_address, details, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (event_type, user_id, username, ip_address, details, now),
+            )
+            conn.commit()
+    except Exception:
+        logger.exception("Failed to write audit log entry: %s", event_type)
+
+
+# ---------------------------------------------------------------------------
+# Password complexity
+# ---------------------------------------------------------------------------
+
+_COMMON_PASSWORDS = {
+    "password", "password1", "password2", "password!", "password123",
+    "12345678", "123456789", "1234567890", "qwerty123", "qwerty12",
+    "iloveyou", "admin123", "welcome1", "monkey123", "dragon123",
+    "pass1234", "letmein1", "sunshine", "princess", "football",
+    "baseball", "superman", "batman12", "shadow12", "master12",
+    "michael1", "abc12345", "trustno1", "jordan23", "harley12",
+}
+
+
+def _password_meets_complexity(password: str) -> tuple[bool, str]:
+    """Return (ok, error_message). Empty error_message means the password is acceptable."""
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters"
+    if password.lower() in _COMMON_PASSWORDS:
+        return False, "Password is too common. Please choose a stronger password."
+    return True, ""
 
 
 def _request_origin_host(request: Request) -> str:
@@ -285,6 +360,67 @@ def _send_reset_email(to_email: str, reset_url: str) -> bool:
     else:
         logger.warning(
             "Password reset email not attempted: missing SMTP and Mailgun configuration"
+        )
+    return False
+
+
+def _send_verification_email(to_email: str, verify_url: str) -> bool:
+    """Send an email verification link via SMTP (preferred), fallback to Mailgun API."""
+    subject = "Verify your Symptom Tracker email address"
+    text_body = (
+        f"Click the link below to verify your email address (link expires in 24 hours):\n\n"
+        f"{verify_url}\n\n"
+        "If you did not create a Symptom Tracker account, you can ignore this email."
+    )
+
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASSWORD", "")
+    smtp_from = os.environ.get("SMTP_FROM", smtp_user)
+    if smtp_host and smtp_user and smtp_pass:
+        msg = MIMEText(text_body)
+        msg["Subject"] = subject
+        msg["From"] = smtp_from
+        msg["To"] = to_email
+        try:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as s:
+                s.starttls()
+                s.login(smtp_user, smtp_pass)
+                s.sendmail(smtp_from, [to_email], msg.as_string())
+            return True
+        except Exception:
+            logger.exception("SMTP verification email send failed")
+
+    mailgun_api_key = os.environ.get("MAILGUN_API_KEY", "")
+    mailgun_domain = os.environ.get("MAILGUN_DOMAIN", "")
+    mailgun_from = os.environ.get("MAILGUN_FROM", "")
+    if mailgun_api_key and mailgun_domain:
+        sender = mailgun_from or f"no-reply@{mailgun_domain}"
+        try:
+            resp = requests.post(
+                f"https://api.mailgun.net/v3/{mailgun_domain}/messages",
+                auth=("api", mailgun_api_key),
+                data={
+                    "from": sender,
+                    "to": [to_email],
+                    "subject": subject,
+                    "text": text_body,
+                },
+                timeout=15,
+            )
+            if 200 <= resp.status_code < 300:
+                return True
+            logger.warning(
+                "Mailgun verification email send failed with status %s: %s",
+                resp.status_code,
+                (resp.text or "")[:200],
+            )
+        except Exception:
+            logger.exception("Mailgun API verification email send failed")
+    else:
+        logger.warning(
+            "Verification email not attempted: missing SMTP and Mailgun configuration"
         )
     return False
 

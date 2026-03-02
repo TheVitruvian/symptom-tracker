@@ -1,4 +1,11 @@
 (function () {
+  function closeNav() {
+    var m = document.getElementById("nav-menu");
+    var b = document.getElementById("nav-toggle");
+    if (m) m.classList.remove("open");
+    if (b) b.innerHTML = "&#9776;";
+  }
+
   function navToggle(event) {
     if (event && typeof event.preventDefault === "function") event.preventDefault();
     var m = document.getElementById("nav-menu");
@@ -165,11 +172,21 @@
     if (tz) setCookie("tz", tz);
   } catch (_) {}
 
+  function setupNavAutoClose() {
+    var menu = document.getElementById("nav-menu");
+    if (!menu) return;
+    menu.addEventListener("click", function (e) {
+      if (e.target.closest("a")) closeNav();
+    });
+  }
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", function () {
       applyClientTimeDefaults(document);
+      setupNavAutoClose();
     });
   } else {
     applyClientTimeDefaults(document);
+    setupNavAutoClose();
   }
 })();

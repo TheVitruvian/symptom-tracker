@@ -24,7 +24,7 @@ from security import (
     _csrf_query_valid,
     _is_same_origin,
 )
-from routers import auth, symptoms, symptoms_analytics, medications, medications_adherence, profile, physician
+from routers import auth, symptoms, symptoms_analytics, medications, medications_adherence, onboarding, profile, physician
 
 # Startup
 init_db()
@@ -38,6 +38,17 @@ for _ext in ["jpg", "png", "gif", "webp"]:
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 @app.middleware("http")
@@ -170,5 +181,6 @@ app.include_router(symptoms.router)
 app.include_router(symptoms_analytics.router)
 app.include_router(medications.router)
 app.include_router(medications_adherence.router)
+app.include_router(onboarding.router)
 app.include_router(profile.router)
 app.include_router(physician.router)

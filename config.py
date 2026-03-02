@@ -7,7 +7,8 @@ from typing import Optional
 
 DB_PATH = "symptoms.db"
 SECRET_KEY_PATH = Path(".app_secret_key")
-SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
+SESSION_TTL_SECONDS = 60 * 60 * 8   # 8 hours
+INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000  # 30 minutes
 SESSION_COOKIE_NAME = "profile_session"
 CSRF_COOKIE_NAME = "csrf_token"
 MAX_PHOTO_SIZE = 5 * 1024 * 1024
@@ -22,8 +23,9 @@ _client_tz_offset_min: ContextVar[Optional[int]] = ContextVar("_client_tz_offset
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-PUBLIC_PATHS = {"/", "/login", "/signup", "/logout", "/forgot-password", "/reset-password"}
+PUBLIC_PATHS = {"/", "/login", "/signup", "/logout", "/forgot-password", "/reset-password", "/verify-email"}
 RESET_TOKEN_TTL_SECONDS = 3600  # 1 hour
+VERIFICATION_TOKEN_TTL_SECONDS = 86400  # 24 hours
 
 FREQ_LABELS: dict[str, str] = {
     "once_daily":  "Once daily",

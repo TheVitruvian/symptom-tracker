@@ -3,6 +3,7 @@ import io
 import re
 import secrets
 from datetime import datetime
+from time import time
 from typing import Optional
 
 from PIL import Image
@@ -13,9 +14,9 @@ _MAX_IMAGE_DIMENSION = 8000  # pixels per side
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id, _from_utc_storage, UPLOAD_DIR, MAX_PHOTO_SIZE, FREQ_LABELS
+from config import _current_user_id, _from_utc_storage, UPLOAD_DIR, MAX_PHOTO_SIZE, FREQ_LABELS, VERIFICATION_TOKEN_TTL_SECONDS
 from db import get_db
-from security import _hash_password, _verify_password, _set_session_cookie
+from security import _hash_password, _verify_password, _set_session_cookie, _send_verification_email
 from ui import PAGE_STYLE, _nav_bar, _calc_age
 
 router = APIRouter()
@@ -210,7 +211,7 @@ def _physician_access_card(share_code: str, linked_physicians, access_log) -> st
 
 
 @router.get("/profile", response_class=HTMLResponse)
-def profile_get(saved: int = 0, error: str = ""):
+def profile_get(error: str = ""):
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute("SELECT * FROM user_profile WHERE id = ?", (uid,)).fetchone()
@@ -229,19 +230,27 @@ def profile_get(saved: int = 0, error: str = ""):
             " ORDER BY al.accessed_at DESC LIMIT 50",
             (uid,),
         ).fetchall()
-    p = dict(row) if row else {"name": "", "dob": "", "conditions": "", "medications": "", "photo_ext": "", "share_code": "", "email": ""}
+    p = dict(row) if row else {"name": "", "dob": "", "conditions": "", "medications": "", "photo_ext": "", "share_code": "", "email": "", "email_verified": 0}
     if sched_text:
         p["medications"] = sched_text
     age = _calc_age(p["dob"])
     age_str = f" &nbsp;<span style='color:#666;font-size:13px;'>({age} years old)</span>" if age is not None else ""
-    if saved:
-        top_banner = """<div style="background:#dcfce7; border:1px solid #86efac; color:#15803d;
-          border-radius:6px; padding:10px 14px; margin-bottom:16px; font-size:14px;">
-          Profile saved.</div>"""
-    elif error:
-        top_banner = f"""<div class="alert">{html.escape(error)}</div>"""
+    top_banner = f'<div class="alert">{html.escape(error)}</div>' if error else ""
+    email_val = p.get("email", "")
+    if email_val and not p.get("email_verified"):
+        verify_banner = (
+            f'<div style="background:#fefce8; border:1px solid #fde047; color:#854d0e; border-radius:6px;'
+            f' padding:10px 14px; margin-bottom:16px; font-size:14px; display:flex;'
+            f' align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">'
+            f'<span>&#9888; Your email <strong>{html.escape(email_val)}</strong> is not verified.'
+            f' Check your inbox for a verification link.</span>'
+            f'<form method="post" action="/profile/resend-verification" style="margin:0;">'
+            f'<button type="submit" style="background:none; border:1px solid #854d0e; border-radius:5px;'
+            f' color:#854d0e; font-size:12px; padding:4px 10px; cursor:pointer; font-family:inherit;">'
+            f'Resend</button></form></div>'
+        )
     else:
-        top_banner = ""
+        verify_banner = ""
     photo_ext = p.get("photo_ext", "")
     if photo_ext:
         photo_html = f"""
@@ -294,6 +303,7 @@ def profile_get(saved: int = 0, error: str = ""):
   <div class="container">
     <h1>My Profile</h1>
     {top_banner}
+    {verify_banner}
     {photo_html}
     <form method="post" action="/profile" style="margin-top:16px;">
       <div class="form-group">
@@ -353,6 +363,7 @@ def profile_get(saved: int = 0, error: str = ""):
 
 @router.post("/profile")
 def profile_update(
+    request: Request,
     name: str = Form(""),
     dob: str = Form(""),
     conditions: str = Form(""),
@@ -375,12 +386,57 @@ def profile_update(
             return RedirectResponse(url="/profile?error=Invalid+date+of+birth", status_code=303)
     uid = _current_user_id.get()
     with get_db() as conn:
+        old_row = conn.execute("SELECT email FROM user_profile WHERE id = ?", (uid,)).fetchone()
+        old_email = old_row["email"] if old_row else ""
+        email_changed = email_clean != old_email
+        if email_changed:
+            conn.execute(
+                "UPDATE user_profile SET name=?, dob=?, conditions=?, medications=?, email=?, email_verified=0 WHERE id=?",
+                (name.strip(), dob, conditions.strip(), medications.strip(), email_clean, uid),
+            )
+            conn.execute("DELETE FROM email_verification_tokens WHERE user_id = ?", (uid,))
+        else:
+            conn.execute(
+                "UPDATE user_profile SET name=?, dob=?, conditions=?, medications=?, email=? WHERE id=?",
+                (name.strip(), dob, conditions.strip(), medications.strip(), email_clean, uid),
+            )
+        conn.commit()
+    if email_changed and email_clean:
+        verify_token = secrets.token_urlsafe(32)
+        verify_expires = int(time()) + VERIFICATION_TOKEN_TTL_SECONDS
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO email_verification_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
+                (verify_token, uid, verify_expires),
+            )
+            conn.commit()
+        base = str(request.base_url).rstrip("/")
+        verify_url = f"{base}/verify-email?token={verify_token}"
+        _send_verification_email(email_clean, verify_url)
+    return RedirectResponse(url="/profile?_toast=Profile+saved", status_code=303)
+
+
+@router.post("/profile/resend-verification")
+def profile_resend_verification(request: Request):
+    uid = _current_user_id.get()
+    with get_db() as conn:
+        row = conn.execute("SELECT email, email_verified FROM user_profile WHERE id = ?", (uid,)).fetchone()
+    if not row or not row["email"] or row["email_verified"]:
+        return RedirectResponse(url="/profile", status_code=303)
+    email_clean = row["email"]
+    with get_db() as conn:
+        conn.execute("DELETE FROM email_verification_tokens WHERE user_id = ?", (uid,))
+        verify_token = secrets.token_urlsafe(32)
+        verify_expires = int(time()) + VERIFICATION_TOKEN_TTL_SECONDS
         conn.execute(
-            "UPDATE user_profile SET name=?, dob=?, conditions=?, medications=?, email=? WHERE id=?",
-            (name.strip(), dob, conditions.strip(), medications.strip(), email_clean, uid),
+            "INSERT INTO email_verification_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
+            (verify_token, uid, verify_expires),
         )
         conn.commit()
-    return RedirectResponse(url="/profile?saved=1", status_code=303)
+    base = str(request.base_url).rstrip("/")
+    verify_url = f"{base}/verify-email?token={verify_token}"
+    _send_verification_email(email_clean, verify_url)
+    return RedirectResponse(url="/profile?_toast=Verification+email+sent", status_code=303)
 
 
 @router.post("/profile/password")
@@ -412,7 +468,7 @@ def profile_change_password(
             "UPDATE user_profile SET password_hash = ? WHERE id = ?", (new_hash, uid)
         )
         conn.commit()
-    resp = RedirectResponse(url="/profile?saved=1", status_code=303)
+    resp = RedirectResponse(url="/profile?_toast=Password+changed", status_code=303)
     _set_session_cookie(resp, request, username, new_hash)
     return resp
 
@@ -466,7 +522,7 @@ async def profile_photo_upload(photo: UploadFile = File(...)):
             (ext, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/profile?saved=1", status_code=303)
+    return RedirectResponse(url="/profile?_toast=Photo+updated", status_code=303)
 
 
 @router.post("/profile/photo/delete")
@@ -480,7 +536,7 @@ def profile_photo_delete():
                 path.unlink()
         conn.execute("UPDATE user_profile SET photo_ext='' WHERE id=?", (uid,))
         conn.commit()
-    return RedirectResponse(url="/profile", status_code=303)
+    return RedirectResponse(url="/profile?_toast=Photo+removed", status_code=303)
 
 
 @router.post("/profile/sync-medications")
@@ -493,7 +549,7 @@ def profile_sync_medications():
             (meds_text, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/profile?saved=1", status_code=303)
+    return RedirectResponse(url="/profile?_toast=Medications+synced", status_code=303)
 
 
 @router.post("/profile/physicians/{physician_id}/revoke")
@@ -505,7 +561,7 @@ def profile_revoke_physician(physician_id: int):
             (physician_id, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/profile?saved=1", status_code=303)
+    return RedirectResponse(url="/profile?_toast=Physician+access+revoked", status_code=303)
 
 
 @router.post("/profile/share-code/regenerate")
@@ -518,4 +574,4 @@ def profile_regenerate_share_code():
             (new_code, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/profile?saved=1", status_code=303)
+    return RedirectResponse(url="/profile?_toast=Share+code+regenerated", status_code=303)
