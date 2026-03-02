@@ -104,6 +104,17 @@ def init_db():
             conn.execute(
                 "ALTER TABLE user_profile ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0"
             )
+        # One-time backfill: mark pre-verification users as verified so they aren't locked out
+        backfilled = conn.execute(
+            "SELECT value FROM app_meta WHERE key='email_verified_backfill_v1'"
+        ).fetchone()
+        if not backfilled:
+            conn.execute(
+                "UPDATE user_profile SET email_verified = 1 WHERE password_hash != ''"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO app_meta (key, value) VALUES ('email_verified_backfill_v1', '1')"
+            )
         if "onboarding_complete" not in cols:
             conn.execute(
                 "ALTER TABLE user_profile ADD COLUMN onboarding_complete INTEGER NOT NULL DEFAULT 0"
@@ -225,6 +236,11 @@ def init_db():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_audit_log_created"
             " ON security_audit_log(created_at DESC)"
+        )
+        # Enforce unique usernames (partial index excludes the legacy empty-string default)
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_profile_username"
+            " ON user_profile(username) WHERE username != ''"
         )
         # Indexes for common query patterns (all filtered by user_id)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_symptoms_user_id ON symptoms(user_id)")

@@ -1,6 +1,5 @@
 import html
 import io
-import re
 import secrets
 from datetime import datetime
 from time import time
@@ -8,16 +7,16 @@ from typing import Optional
 
 from PIL import Image
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _MAX_IMAGE_DIMENSION = 8000  # pixels per side
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
-from config import _current_user_id, _from_utc_storage, UPLOAD_DIR, MAX_PHOTO_SIZE, FREQ_LABELS, VERIFICATION_TOKEN_TTL_SECONDS
+from config import _current_user_id, _physician_ctx, _from_utc_storage, UPLOAD_DIR, MAX_PHOTO_SIZE, FREQ_LABELS, VERIFICATION_TOKEN_TTL_SECONDS
 from db import get_db
-from security import _hash_password, _verify_password, _set_session_cookie, _send_verification_email
+from security import _hash_password, _hash_token, _verify_password, _set_session_cookie, _send_verification_email
 from ui import PAGE_STYLE, _nav_bar, _calc_age
+from email_validation import is_semantic_email, normalize_email
 
 router = APIRouter()
 
@@ -74,8 +73,8 @@ def api_profile_update(
         return JSONResponse({"status": "error", "error": "Name must be 120 characters or fewer"}, status_code=400)
     if len(conditions) > 2000:
         return JSONResponse({"status": "error", "error": "Conditions must be 2000 characters or fewer"}, status_code=400)
-    email_clean = email.strip().lower()
-    if email_clean and not _EMAIL_RE.match(email_clean):
+    email_clean = normalize_email(email)
+    if email_clean and not is_semantic_email(email_clean):
         return JSONResponse({"status": "error", "error": "Invalid email address"}, status_code=400)
     if len(email_clean) > 254:
         return JSONResponse({"status": "error", "error": "Email address is too long"}, status_code=400)
@@ -235,6 +234,41 @@ def profile_get(error: str = ""):
         p["medications"] = sched_text
     age = _calc_age(p["dob"])
     age_str = f" &nbsp;<span style='color:#666;font-size:13px;'>({age} years old)</span>" if age is not None else ""
+    is_physician_view = _physician_ctx.get() is not None
+    if is_physician_view:
+        email_field_html = ""
+        change_password_html = ""
+    else:
+        _ev = html.escape(p.get("email", ""))
+        email_field_html = (
+            f'<div class="form-group">'
+            f'<label for="email">Email <span style="color:#aaa;font-weight:400">(used for password reset)</span></label>'
+            f'<input type="email" id="email" name="email" value="{_ev}"'
+            f' placeholder="you@example.com" autocomplete="email"></div>'
+        )
+        change_password_html = """<details style="margin-top:28px;">
+      <summary style="cursor:pointer; font-size:14px; font-weight:600; color:#374151;">
+        Change Password
+      </summary>
+      <form method="post" action="/profile/password" style="margin-top:12px;">
+        <div class="form-group">
+          <label for="current_password">Current Password</label>
+          <input type="password" id="current_password" name="current_password"
+            required autocomplete="current-password">
+        </div>
+        <div class="form-group">
+          <label for="new_password">New Password</label>
+          <input type="password" id="new_password" name="new_password"
+            placeholder="At least 8 characters" required autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label for="confirm_password">Confirm New Password</label>
+          <input type="password" id="confirm_password" name="confirm_password"
+            required autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn-primary">Change Password</button>
+      </form>
+    </details>"""
     top_banner = f'<div class="alert">{html.escape(error)}</div>' if error else ""
     email_val = p.get("email", "")
     if email_val and not p.get("email_verified"):
@@ -314,11 +348,7 @@ def profile_get(error: str = ""):
         <label for="dob">Date of Birth{age_str}</label>
         <input type="date" id="dob" name="dob" value="{html.escape(p['dob'])}">
       </div>
-      <div class="form-group">
-        <label for="email">Email <span style="color:#aaa;font-weight:400">(used for password reset)</span></label>
-        <input type="email" id="email" name="email" value="{html.escape(p.get('email', ''))}"
-          placeholder="you@example.com" autocomplete="email">
-      </div>
+      {email_field_html}
       <div class="form-group">
         <label for="conditions">Known Conditions</label>
         <textarea id="conditions" name="conditions" rows="3"
@@ -332,29 +362,7 @@ def profile_get(error: str = ""):
       <button type="submit" class="btn-primary">Save Profile</button>
     </form>
     {_physician_access_card(p.get("share_code", ""), linked_physicians, access_log)}
-    <details style="margin-top:28px;">
-      <summary style="cursor:pointer; font-size:14px; font-weight:600; color:#374151;">
-        Change Password
-      </summary>
-      <form method="post" action="/profile/password" style="margin-top:12px;">
-        <div class="form-group">
-          <label for="current_password">Current Password</label>
-          <input type="password" id="current_password" name="current_password"
-            required autocomplete="current-password">
-        </div>
-        <div class="form-group">
-          <label for="new_password">New Password</label>
-          <input type="password" id="new_password" name="new_password"
-            placeholder="At least 8 characters" required autocomplete="new-password">
-        </div>
-        <div class="form-group">
-          <label for="confirm_password">Confirm New Password</label>
-          <input type="password" id="confirm_password" name="confirm_password"
-            required autocomplete="new-password">
-        </div>
-        <button type="submit" class="btn-primary">Change Password</button>
-      </form>
-    </details>
+    {change_password_html}
   </div>
 </body>
 </html>
@@ -374,8 +382,8 @@ def profile_update(
         return RedirectResponse(url="/profile?error=Name+must+be+120+characters+or+fewer", status_code=303)
     if len(conditions) > 2000:
         return RedirectResponse(url="/profile?error=Conditions+must+be+2000+characters+or+fewer", status_code=303)
-    email_clean = email.strip().lower()
-    if email_clean and not _EMAIL_RE.match(email_clean):
+    email_clean = normalize_email(email)
+    if email_clean and not is_semantic_email(email_clean):
         return RedirectResponse(url="/profile?error=Invalid+email+address", status_code=303)
     if len(email_clean) > 254:
         return RedirectResponse(url="/profile?error=Email+address+is+too+long", status_code=303)
@@ -385,6 +393,8 @@ def profile_update(
         except ValueError:
             return RedirectResponse(url="/profile?error=Invalid+date+of+birth", status_code=303)
     uid = _current_user_id.get()
+    if _physician_ctx.get() is not None:
+        return RedirectResponse(url="/profile?error=Physicians+cannot+modify+patient+credentials", status_code=303)
     with get_db() as conn:
         old_row = conn.execute("SELECT email FROM user_profile WHERE id = ?", (uid,)).fetchone()
         old_email = old_row["email"] if old_row else ""
@@ -407,7 +417,7 @@ def profile_update(
         with get_db() as conn:
             conn.execute(
                 "INSERT INTO email_verification_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
-                (verify_token, uid, verify_expires),
+                (_hash_token(verify_token), uid, verify_expires),
             )
             conn.commit()
         base = str(request.base_url).rstrip("/")
@@ -430,7 +440,7 @@ def profile_resend_verification(request: Request):
         verify_expires = int(time()) + VERIFICATION_TOKEN_TTL_SECONDS
         conn.execute(
             "INSERT INTO email_verification_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
-            (verify_token, uid, verify_expires),
+            (_hash_token(verify_token), uid, verify_expires),
         )
         conn.commit()
     base = str(request.base_url).rstrip("/")
@@ -446,6 +456,8 @@ def profile_change_password(
     new_password: str = Form(""),
     confirm_password: str = Form(""),
 ):
+    if _physician_ctx.get() is not None:
+        return RedirectResponse(url="/profile?error=Physicians+cannot+modify+patient+credentials", status_code=303)
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute(

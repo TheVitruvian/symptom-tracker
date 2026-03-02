@@ -22,6 +22,7 @@ router = APIRouter()
 _PHYSICIAN_STYLE = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="/static/favicon.png">
   <style>
     body { font-family: system-ui, sans-serif; background: #f5f5f5; margin: 0; color: #222; }
     .ph-nav { background: #1e3a8a; padding: 0 24px; height: 52px; display: flex;

@@ -325,6 +325,7 @@ def _nav_bar(active: str = "") -> str:
 PAGE_STYLE = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="/static/favicon.png">
   <script defer src="/static/app.js?v=1"></script>
   <style>
     body { font-family: system-ui, sans-serif; background: #f5f5f5; margin: 0; padding: 0; color: #222; }

@@ -114,8 +114,9 @@ def symptoms_chart():
     import html as _html
     uid = _current_user_id.get()
     with get_db() as conn:
-        _row = conn.execute("SELECT name FROM user_profile WHERE id=?", (uid,)).fetchone()
+        _row = conn.execute("SELECT name, share_code FROM user_profile WHERE id=?", (uid,)).fetchone()
     patient_name = _html.escape(_row["name"] if _row and _row["name"] else "")
+    share_code = _html.escape(_row["share_code"] if _row and _row["share_code"] else "")
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -178,6 +179,35 @@ def symptoms_chart():
     font-size: 13px;
     cursor: pointer;
     font-family: inherit;
+  }}
+  .btn-share {{
+    border: 1px solid #0369a1;
+    background: #0ea5e9;
+    color: #fff;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
+  }}
+  #share-modal-backdrop {{
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(17,24,39,0.55);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+  }}
+  #share-modal-backdrop.open {{ display: flex; }}
+  #share-modal {{
+    background: #fff;
+    border-radius: 12px;
+    padding: 28px 32px;
+    max-width: 380px;
+    width: 90%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+    text-align: center;
   }}
   .btn-smooth {{
     border: 1px solid #1e3a8a;
@@ -258,7 +288,32 @@ def symptoms_chart():
     </div>
     <div class="screen-only report-header">
       <h1 style="margin:0;">Health Report</h1>
-      <button class="btn-print" onclick="printReport()">Print Report</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn-share" onclick="document.getElementById('share-modal-backdrop').classList.add('open')">Share with Physician</button>
+        <button class="btn-print" onclick="printReport()">Print Report</button>
+      </div>
+    </div>
+
+    <div id="share-modal-backdrop">
+      <div id="share-modal">
+        <p style="font-size:15px; font-weight:700; color:#1e3a8a; margin:0 0 8px;">Share with Your Physician</p>
+        <p style="font-size:13px; color:#555; margin:0 0 20px; line-height:1.5;">
+          Give your physician this code to grant them access to your health data.
+        </p>
+        <div style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:14px; margin-bottom:20px;">
+          <code id="share-code-display" style="font-size:28px; font-weight:800; letter-spacing:4px; color:#1e3a8a;">{share_code}</code>
+        </div>
+        <button onclick="copyShareCode()" id="copy-btn"
+          style="width:100%; padding:9px; background:#0ea5e9; color:#fff; border:none;
+                 border-radius:7px; font-size:14px; font-weight:600; cursor:pointer; font-family:inherit; margin-bottom:10px;">
+          Copy Code
+        </button>
+        <button onclick="document.getElementById('share-modal-backdrop').classList.remove('open')"
+          style="width:100%; padding:8px; background:none; border:1px solid #d1d5db;
+                 border-radius:7px; font-size:14px; cursor:pointer; font-family:inherit; color:#374151;">
+          Close
+        </button>
+      </div>
     </div>
     <div class="screen-only controls-row" style="margin:12px 0 4px;">
       <div class="control-group">
@@ -713,6 +768,19 @@ def symptoms_chart():
           </tr></thead>
           <tbody>${{rows}}</tbody>
         </table>`;
+    }}
+
+    function copyShareCode() {{
+      const code = document.getElementById("share-code-display").textContent.trim();
+      navigator.clipboard.writeText(code).then(() => {{
+        const btn = document.getElementById("copy-btn");
+        btn.textContent = "Copied!";
+        setTimeout(() => {{ btn.textContent = "Copy Code"; }}, 2000);
+      }}).catch(() => {{
+        const btn = document.getElementById("copy-btn");
+        btn.textContent = "Copy failed";
+        setTimeout(() => {{ btn.textContent = "Copy Code"; }}, 2000);
+      }});
     }}
 
     function printReport() {{

@@ -145,12 +145,24 @@
     var token = getCookie("csrf_token");
     if (!token) return;
     document.querySelectorAll('form[method="post"], form[method="POST"]').forEach(function (f) {
-      var action = f.getAttribute("action") || "";
-      if (action.indexOf("_csrf=") !== -1) return;
-      f.setAttribute(
-        "action",
-        action + (action.indexOf("?") === -1 ? "?" : "&") + "_csrf=" + encodeURIComponent(token)
-      );
+      var enc = (f.getAttribute("enctype") || "").toLowerCase();
+      if (enc === "multipart/form-data") {
+        // File upload forms: keep token in URL (body is opaque multipart)
+        var action = f.getAttribute("action") || "";
+        if (action.indexOf("_csrf=") !== -1) return;
+        f.setAttribute(
+          "action",
+          action + (action.indexOf("?") === -1 ? "?" : "&") + "_csrf=" + encodeURIComponent(token)
+        );
+      } else {
+        // Regular forms: hidden field keeps token out of server logs
+        if (f.querySelector('input[name="_csrf"]')) return;
+        var input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "_csrf";
+        input.value = token;
+        f.appendChild(input);
+      }
     });
   }
 

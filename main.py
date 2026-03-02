@@ -22,6 +22,7 @@ from security import (
     _ensure_csrf_cookie,
     _csrf_header_valid,
     _csrf_query_valid,
+    _csrf_form_valid,
     _is_same_origin,
 )
 from routers import auth, symptoms, symptoms_analytics, medications, medications_adherence, onboarding, profile, physician
@@ -40,12 +41,32 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+# Paths accessible to authenticated-but-unverified users (the gate page itself + resend action)
+_VERIFICATION_EXEMPT = frozenset({"/verify-pending", "/profile/resend-verification"})
+
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self'; "
+    "connect-src 'self'; "
+    "form-action 'self'; "
+    "base-uri 'self'; "
+    "object-src 'none'; "
+    "frame-ancestors 'self'"
+)
+
+
 @app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
+    response.headers["Content-Security-Policy"] = _CSP
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
@@ -64,10 +85,11 @@ async def auth_middleware(request: Request, call_next):
             if not _csrf_header_valid(request):
                 return JSONResponse({"error": "forbidden"}, status_code=403)
         elif path not in PUBLIC_PATHS and not path.startswith("/physician"):
-            # Require CSRF query param for authenticated patient form POSTs.
-            # Excludes public routes (login/signup) and physician routes which
-            # have their own auth and don't use the JS form injection.
-            if not _csrf_query_valid(request):
+            # Require CSRF token for authenticated patient form POSTs.
+            # Regular forms send token as a hidden field (body); multipart forms
+            # (file uploads) send it as a query param since the body is opaque.
+            # Excludes public routes (login/signup) and physician routes.
+            if not _csrf_query_valid(request) and not await _csrf_form_valid(request):
                 return RedirectResponse(url="/login?error=Forbidden+request", status_code=303)
     # Physician-only routes
     if path.startswith("/physician"):
@@ -116,6 +138,10 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         return RedirectResponse(url="/login", status_code=303)
     _current_user_id.set(user["id"])
+    if not user["email_verified"] and path not in _VERIFICATION_EXEMPT:
+        if path.startswith("/api/"):
+            return JSONResponse({"error": "email not verified"}, status_code=403)
+        return RedirectResponse(url="/verify-pending", status_code=303)
     return _ensure_csrf_cookie(request, await call_next(request))
 
 
@@ -130,6 +156,7 @@ def root(request: Request):
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="/static/favicon.png">
   <title>Symptom Tracker</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }

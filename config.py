@@ -15,7 +15,7 @@ MAX_PHOTO_SIZE = 5 * 1024 * 1024
 
 PHYSICIAN_COOKIE_NAME = "physician_session"
 PHYSICIAN_CTX_COOKIE  = "physician_ctx"
-_current_user_id: ContextVar[int]           = ContextVar("_current_user_id", default=1)
+_current_user_id: ContextVar[int]           = ContextVar("_current_user_id", default=0)
 _physician_ctx:   ContextVar[Optional[str]] = ContextVar("_physician_ctx",   default=None)
 _client_now: ContextVar[Optional[datetime]] = ContextVar("_client_now", default=None)
 _client_tz_offset_min: ContextVar[Optional[int]] = ContextVar("_client_tz_offset_min", default=None)
@@ -23,7 +23,7 @@ _client_tz_offset_min: ContextVar[Optional[int]] = ContextVar("_client_tz_offset
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-PUBLIC_PATHS = {"/", "/login", "/signup", "/logout", "/forgot-password", "/reset-password", "/verify-email"}
+PUBLIC_PATHS = {"/", "/login", "/signup", "/logout", "/forgot-password", "/forgot-username", "/reset-password", "/verify-email", "/api/check-username", "/api/check-email"}
 RESET_TOKEN_TTL_SECONDS = 3600  # 1 hour
 VERIFICATION_TOKEN_TTL_SECONDS = 86400  # 24 hours
 

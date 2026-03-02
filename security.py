@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from time import time
 from typing import Optional
+from urllib.parse import parse_qs
 
 import requests
 from fastapi import Request
@@ -180,10 +181,30 @@ def _csrf_header_valid(request: Request) -> bool:
 
 
 def _csrf_query_valid(request: Request) -> bool:
-    """Check CSRF token submitted as a query parameter (used by HTML form POSTs)."""
+    """Check CSRF token submitted as a query parameter (used by multipart form POSTs)."""
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
     query_token = request.query_params.get("_csrf", "")
     return bool(cookie_token) and hmac.compare_digest(cookie_token, query_token)
+
+
+async def _csrf_form_valid(request: Request) -> bool:
+    """Check CSRF token in a hidden form field (used by regular url-encoded form POSTs).
+    Starlette caches the body after first read, so route handlers can still call request.form()."""
+    content_type = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" not in content_type:
+        return False
+    cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
+    if not cookie_token:
+        return False
+    body = await request.body()
+    params = parse_qs(body.decode("utf-8", errors="ignore"), keep_blank_values=True)
+    form_token = params.get("_csrf", [""])[0]
+    return bool(form_token) and hmac.compare_digest(cookie_token, form_token)
+
+
+def _hash_token(token: str) -> str:
+    """SHA-256 hash of a high-entropy random token for safe DB storage."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _hash_password(plaintext: str) -> str:
@@ -421,6 +442,66 @@ def _send_verification_email(to_email: str, verify_url: str) -> bool:
     else:
         logger.warning(
             "Verification email not attempted: missing SMTP and Mailgun configuration"
+        )
+    return False
+
+
+def _send_username_reminder_email(to_email: str, username: str) -> bool:
+    """Send a username reminder email via SMTP (preferred), fallback to Mailgun API."""
+    subject = "Your Symptom Tracker username"
+    text_body = (
+        f"Your Symptom Tracker username is: {username}\n\n"
+        "If you did not request this reminder, you can ignore this email."
+    )
+
+    smtp_host = os.environ.get("SMTP_HOST", "")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_pass = os.environ.get("SMTP_PASSWORD", "")
+    smtp_from = os.environ.get("SMTP_FROM", smtp_user)
+    if smtp_host and smtp_user and smtp_pass:
+        msg = MIMEText(text_body)
+        msg["Subject"] = subject
+        msg["From"] = smtp_from
+        msg["To"] = to_email
+        try:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as s:
+                s.starttls()
+                s.login(smtp_user, smtp_pass)
+                s.sendmail(smtp_from, [to_email], msg.as_string())
+            return True
+        except Exception:
+            logger.exception("SMTP username reminder email send failed")
+
+    mailgun_api_key = os.environ.get("MAILGUN_API_KEY", "")
+    mailgun_domain = os.environ.get("MAILGUN_DOMAIN", "")
+    mailgun_from = os.environ.get("MAILGUN_FROM", "")
+    if mailgun_api_key and mailgun_domain:
+        sender = mailgun_from or f"no-reply@{mailgun_domain}"
+        try:
+            resp = requests.post(
+                f"https://api.mailgun.net/v3/{mailgun_domain}/messages",
+                auth=("api", mailgun_api_key),
+                data={
+                    "from": sender,
+                    "to": [to_email],
+                    "subject": subject,
+                    "text": text_body,
+                },
+                timeout=15,
+            )
+            if 200 <= resp.status_code < 300:
+                return True
+            logger.warning(
+                "Mailgun username reminder email send failed with status %s: %s",
+                resp.status_code,
+                (resp.text or "")[:200],
+            )
+        except Exception:
+            logger.exception("Mailgun API username reminder email send failed")
+    else:
+        logger.warning(
+            "Username reminder email not attempted: missing SMTP and Mailgun configuration"
         )
     return False
 
