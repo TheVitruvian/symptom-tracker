@@ -76,8 +76,7 @@ def symptoms_list():
 
 
 @router.get("/symptoms/new", response_class=HTMLResponse)
-def symptoms_new(error: str = ""):
-    error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
+def symptoms_new():
     return f"""<!DOCTYPE html>
 <html>
 <head>{PAGE_STYLE}</head>
@@ -85,9 +84,9 @@ def symptoms_new(error: str = ""):
   {_nav_bar('new')}
   <div class="container">
     <h1>Log a Symptom</h1>
-    {error_html}
     <div class="card">
-      <form method="post" action="/symptoms">
+      <form method="post" action="/symptoms" data-ajax>
+        <div class="form-error" style="display:none"></div>
 
         <div class="form-group">
           <label for="name">Symptom name <span style="color:#ef4444">*</span></label>
@@ -176,7 +175,7 @@ def symptoms_create(
 ):
     error, ts_dt, end_dt = _validate_symptom_payload(name, severity, notes, symptom_date, end_date)
     if error:
-        return RedirectResponse(url="/symptoms/new?error=" + error.replace(" ", "+"), status_code=303)
+        return JSONResponse({"ok": False, "error": error}, status_code=400)
     timestamp = _to_utc_storage(ts_dt)
     end_time = ""
     if end_dt:
@@ -189,7 +188,7 @@ def symptoms_create(
             (name.strip(), severity, notes.strip(), timestamp, end_time, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/symptoms/chart?_toast=Symptom+logged", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Symptom logged", "redirect": "/symptoms/chart"})
 
 
 @router.post("/symptoms/delete")
@@ -202,11 +201,11 @@ def symptoms_delete(id: int = Form(...)):
             (deleted_at, id, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/symptoms/chart?_toast=Symptom+updated", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Symptom updated", "redirect": "/symptoms/chart"})
 
 
 @router.get("/symptoms/{sym_id}/edit", response_class=HTMLResponse)
-def symptoms_edit_get(sym_id: int, error: str = ""):
+def symptoms_edit_get(sym_id: int):
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute(
@@ -218,7 +217,6 @@ def symptoms_edit_get(sym_id: int, error: str = ""):
     dt_local = _from_utc_storage(e["timestamp"]).strftime("%Y-%m-%dT%H:%M")
     end_local = _from_utc_storage(e["end_time"]).strftime("%Y-%m-%dT%H:%M") if e.get("end_time") else ""
     sev = e["severity"]
-    error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
     return f"""<!DOCTYPE html>
 <html>
 <head>{PAGE_STYLE}</head>
@@ -226,9 +224,9 @@ def symptoms_edit_get(sym_id: int, error: str = ""):
   {_nav_bar('list')}
   <div class="container">
     <h1>Edit Symptom</h1>
-    {error_html}
     <div class="card">
-      <form method="post" action="/symptoms/{sym_id}/edit">
+      <form method="post" action="/symptoms/{sym_id}/edit" data-ajax>
+        <div class="form-error" style="display:none"></div>
         <div class="form-group">
           <label for="name">Symptom name <span style="color:#ef4444">*</span></label>
           <input type="text" id="name" name="name" value="{html.escape(e['name'])}"
@@ -314,9 +312,7 @@ def symptoms_edit_post(
 ):
     error, ts_dt, end_dt = _validate_symptom_payload(name, severity, notes, symptom_date, end_date)
     if error:
-        return RedirectResponse(
-            url=f"/symptoms/{sym_id}/edit?error=" + error.replace(" ", "+"), status_code=303
-        )
+        return JSONResponse({"ok": False, "error": error}, status_code=400)
     timestamp = _to_utc_storage(ts_dt)
     end_time = ""
     if end_dt:
@@ -329,7 +325,7 @@ def symptoms_edit_post(
             (name.strip(), severity, notes.strip(), timestamp, end_time, sym_id, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/symptoms", status_code=303)
+    return JSONResponse({"ok": True, "redirect": "/symptoms"})
 
 
 @router.get("/api/symptoms")

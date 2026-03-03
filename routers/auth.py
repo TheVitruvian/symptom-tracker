@@ -39,7 +39,7 @@ def check_username(username: str = ""):
         return JSONResponse({"available": False})
     with get_db() as conn:
         row = conn.execute(
-            "SELECT id FROM user_profile WHERE username = ?", (username,)
+            "SELECT id FROM user_profile WHERE username = ? COLLATE NOCASE", (username,)
         ).fetchone()
     return JSONResponse({"available": row is None})
 
@@ -57,8 +57,7 @@ def check_email(email: str = ""):
 
 
 @router.get("/signup", response_class=HTMLResponse)
-def signup_get(error: str = ""):
-    error_banner = f'<div class="alert">{html.escape(error)}</div>' if error else ""
+def signup_get():
     return f"""<!DOCTYPE html>
 <html>
 <head>{PAGE_STYLE}<title>Set Up Account</title></head>
@@ -68,8 +67,8 @@ def signup_get(error: str = ""):
     <p style="color:#555; font-size:14px; margin-bottom:16px;">
       Choose a username and password to protect your symptom tracker.
     </p>
-    {error_banner}
-    <form method="post" action="/signup">
+    <form method="post" action="/signup" data-ajax>
+      <div class="form-error" style="display:none"></div>
       <div class="form-group">
         <label for="username">Username</label>
         <input type="text" id="username" name="username"
@@ -141,22 +140,22 @@ def signup_post(
     confirm_password: str = Form(""),
 ):
     if len(username) > 60:
-        return RedirectResponse(url="/signup?error=Username+must+be+60+characters+or+fewer", status_code=303)
+        return JSONResponse({"ok": False, "error": "Username must be 60 characters or fewer"}, status_code=400)
     if len(email) > 254:
-        return RedirectResponse(url="/signup?error=Email+address+is+too+long", status_code=303)
+        return JSONResponse({"ok": False, "error": "Email address is too long"}, status_code=400)
     if len(new_password) > 1000:
-        return RedirectResponse(url="/signup?error=Password+is+too+long", status_code=303)
+        return JSONResponse({"ok": False, "error": "Password is too long"}, status_code=400)
     if not username.strip():
-        return RedirectResponse(url="/signup?error=Username+is+required", status_code=303)
+        return JSONResponse({"ok": False, "error": "Username is required"}, status_code=400)
     if not email.strip():
-        return RedirectResponse(url="/signup?error=Email+is+required", status_code=303)
+        return JSONResponse({"ok": False, "error": "Email is required"}, status_code=400)
     if not is_semantic_email(email):
-        return RedirectResponse(url="/signup?error=Invalid+email+address", status_code=303)
+        return JSONResponse({"ok": False, "error": "Invalid email address"}, status_code=400)
     pw_ok, pw_err = _password_meets_complexity(new_password)
     if not pw_ok:
-        return RedirectResponse(url=f"/signup?error={pw_err.replace(' ', '+')}", status_code=303)
+        return JSONResponse({"ok": False, "error": pw_err}, status_code=400)
     if new_password != confirm_password:
-        return RedirectResponse(url="/signup?error=Passwords+do+not+match", status_code=303)
+        return JSONResponse({"ok": False, "error": "Passwords do not match"}, status_code=400)
     pw_hash = _hash_password(new_password)
     share_code = secrets.token_hex(4).upper()
     ip = request.client.host if request.client else "unknown"
@@ -170,7 +169,7 @@ def signup_post(
             new_user_id = cursor.lastrowid
             conn.commit()
     except sqlite3.IntegrityError:
-        return RedirectResponse(url="/signup?error=Username+already+taken", status_code=303)
+        return JSONResponse({"ok": False, "error": "Username already taken"}, status_code=400)
     if email_clean:
         verify_token = secrets.token_urlsafe(32)
         verify_expires = int(time()) + VERIFICATION_TOKEN_TTL_SECONDS
@@ -184,22 +183,17 @@ def signup_post(
         verify_url = f"{base}/verify-email?token={verify_token}"
         _send_verification_email(email_clean, verify_url)
     _audit_log("signup", username=username.strip(), ip_address=ip)
-    resp = RedirectResponse(url="/verify-pending", status_code=303)
+    resp = JSONResponse({"ok": True, "redirect": "/verify-pending"})
     _set_session_cookie(resp, request, username.strip(), pw_hash)
     return resp
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_get(request: Request, error: str = "", success: str = ""):
+def login_get(request: Request):
     if not _has_any_patient():
         return RedirectResponse(url="/signup", status_code=303)
     if _get_authenticated_user(request):
         return RedirectResponse(url="/", status_code=303)
-    error_banner = f'<div class="alert">{html.escape(error)}</div>' if error else ""
-    success_banner = (
-        f'<div style="background:#dcfce7; border:1px solid #86efac; color:#15803d; border-radius:6px;'
-        f' padding:10px 14px; margin-bottom:16px; font-size:14px;">{html.escape(success)}</div>'
-    ) if success else ""
     return f"""<!DOCTYPE html>
 <html>
 <head>{PAGE_STYLE}<title>Log In</title></head>
@@ -207,9 +201,8 @@ def login_get(request: Request, error: str = "", success: str = ""):
   <div class="container">
     <h1>Symptom Tracker</h1>
     <p style="color:#555; font-size:14px; margin-bottom:16px;">Enter your credentials to continue.</p>
-    {error_banner}
-    {success_banner}
-    <form method="post" action="/login">
+    <form method="post" action="/login" data-ajax>
+      <div class="form-error" style="display:none"></div>
       <div class="form-group">
         <label for="username">Username</label>
         <input type="text" id="username" name="username" required autocomplete="username">
@@ -242,26 +235,26 @@ def login_post(request: Request, username: str = Form(""), password: str = Form(
     ip = request.client.host if request.client else "unknown"
     if not _is_login_allowed(ip):
         _audit_log("login_rate_limited_ip", username=username.strip()[:60], ip_address=ip)
-        return RedirectResponse(url="/login?error=Too+many+attempts.+Please+wait+before+trying+again.", status_code=303)
+        return JSONResponse({"ok": False, "error": "Too many attempts. Please wait before trying again."}, status_code=429)
     if not _is_username_login_allowed(username.strip()):
         _audit_log("login_account_locked", username=username.strip()[:60], ip_address=ip)
-        return RedirectResponse(url="/login?error=Too+many+attempts.+Please+wait+before+trying+again.", status_code=303)
+        return JSONResponse({"ok": False, "error": "Too many attempts. Please wait before trying again."}, status_code=429)
     if len(username) > 60 or len(password) > 1000:
-        return RedirectResponse(url="/login?error=Incorrect+username+or+password", status_code=303)
+        return JSONResponse({"ok": False, "error": "Incorrect username or password"}, status_code=400)
     with get_db() as conn:
         row = conn.execute(
-            "SELECT * FROM user_profile WHERE username = ?", (username.strip(),)
+            "SELECT * FROM user_profile WHERE username = ? COLLATE NOCASE", (username.strip(),)
         ).fetchone()
     if not row or not row["password_hash"]:
         _record_login_failure(username.strip())
         _audit_log("login_failure", username=username.strip(), ip_address=ip, details="user not found")
-        return RedirectResponse(url="/login?error=Incorrect+username+or+password", status_code=303)
+        return JSONResponse({"ok": False, "error": "Incorrect username or password"}, status_code=400)
     if not _verify_password(password, row["password_hash"]):
         _record_login_failure(username.strip())
         _audit_log("login_failure", user_id=row["id"], username=row["username"], ip_address=ip)
-        return RedirectResponse(url="/login?error=Incorrect+username+or+password", status_code=303)
+        return JSONResponse({"ok": False, "error": "Incorrect username or password"}, status_code=400)
     _audit_log("login_success", user_id=row["id"], username=row["username"], ip_address=ip)
-    resp = RedirectResponse(url="/", status_code=303)
+    resp = JSONResponse({"ok": True, "redirect": "/"})
     _set_session_cookie(resp, request, row["username"], row["password_hash"])
     return resp
 
@@ -272,23 +265,13 @@ def logout(request: Request):
     if user:
         ip = request.client.host if request.client else "unknown"
         _audit_log("logout", user_id=user["id"], username=user["username"], ip_address=ip)
-    resp = RedirectResponse(url="/login", status_code=303)
+    resp = JSONResponse({"ok": True, "redirect": "/login"})
     resp.delete_cookie(SESSION_COOKIE_NAME)
     return resp
 
 
 @router.get("/forgot-password", response_class=HTMLResponse)
-def forgot_password_get(sent: int = 0, error: str = ""):
-    if sent:
-        banner = (
-            '<div style="background:#dcfce7; border:1px solid #86efac; color:#15803d; border-radius:6px;'
-            ' padding:10px 14px; margin-bottom:16px; font-size:14px;">'
-            "If that email address is registered, a password reset link has been sent.</div>"
-        )
-    elif error:
-        banner = f'<div class="alert">{html.escape(error)}</div>'
-    else:
-        banner = ""
+def forgot_password_get():
     return f"""<!DOCTYPE html>
 <html>
 <head>{PAGE_STYLE}<title>Forgot Password</title></head>
@@ -298,8 +281,8 @@ def forgot_password_get(sent: int = 0, error: str = ""):
     <p style="color:#555; font-size:14px; margin-bottom:16px;">
       Enter the email address associated with your account and we'll send you a reset link.
     </p>
-    {banner}
-    <form method="post" action="/forgot-password">
+    <form method="post" action="/forgot-password" data-ajax>
+      <div class="form-error" style="display:none"></div>
       <div class="form-group">
         <label for="email">Email address</label>
         <input type="email" id="email" name="email" required autocomplete="email"
@@ -319,13 +302,14 @@ def forgot_password_get(sent: int = 0, error: str = ""):
 @router.post("/forgot-password")
 def forgot_password_post(request: Request, email: str = Form("")):
     ip = request.client.host if request.client else "unknown"
+    _TOAST = "If that email address is registered, a password reset link has been sent."
     if not _is_reset_allowed(ip):
-        return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
+        return JSONResponse({"ok": True, "toast": _TOAST})
     if len(email) > 254:
-        return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
+        return JSONResponse({"ok": True, "toast": _TOAST})
     email = normalize_email(email)
     if email and not is_semantic_email(email):
-        return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
+        return JSONResponse({"ok": True, "toast": _TOAST})
     if email:
         with get_db() as conn:
             patient = conn.execute(
@@ -347,16 +331,11 @@ def forgot_password_post(request: Request, email: str = Form("")):
             reset_url = f"{base}/reset-password?token={token}"
             _send_reset_email(email, reset_url)
     # Always show the same message regardless of outcome to prevent email enumeration
-    return RedirectResponse(url="/forgot-password?sent=1", status_code=303)
+    return JSONResponse({"ok": True, "toast": "If that email address is registered, a password reset link has been sent."})
 
 
 @router.get("/forgot-username", response_class=HTMLResponse)
-def forgot_username_get(sent: int = 0):
-    banner = (
-        '<div style="background:#dcfce7; border:1px solid #86efac; color:#15803d; border-radius:6px;'
-        ' padding:10px 14px; margin-bottom:16px; font-size:14px;">'
-        "If that email address is registered, your username has been sent to your inbox.</div>"
-    ) if sent else ""
+def forgot_username_get():
     return f"""<!DOCTYPE html>
 <html>
 <head>{PAGE_STYLE}<title>Forgot Username</title></head>
@@ -366,8 +345,8 @@ def forgot_username_get(sent: int = 0):
     <p style="color:#555; font-size:14px; margin-bottom:16px;">
       Enter the email address you signed up with and we'll send your username to your inbox.
     </p>
-    {banner}
-    <form method="post" action="/forgot-username">
+    <form method="post" action="/forgot-username" data-ajax>
+      <div class="form-error" style="display:none"></div>
       <div class="form-group">
         <label for="email">Email address</label>
         <input type="email" id="email" name="email" required autocomplete="email"
@@ -387,7 +366,7 @@ def forgot_username_get(sent: int = 0):
 @router.post("/forgot-username")
 def forgot_username_post(request: Request, email: str = Form("")):
     if len(email) > 254:
-        return RedirectResponse(url="/forgot-username?sent=1", status_code=303)
+        return JSONResponse({"ok": True, "toast": "If that email address is registered, your username has been sent to your inbox."})
     email = normalize_email(email)
     if email and is_semantic_email(email):
         with get_db() as conn:
@@ -397,13 +376,13 @@ def forgot_username_post(request: Request, email: str = Form("")):
         if row and row["username"]:
             _send_username_reminder_email(email, row["username"])
     # Always show the same message to prevent email enumeration
-    return RedirectResponse(url="/forgot-username?sent=1", status_code=303)
+    return JSONResponse({"ok": True, "toast": "If that email address is registered, your username has been sent to your inbox."})
 
 
 @router.get("/reset-password", response_class=HTMLResponse)
-def reset_password_get(token: str = "", error: str = ""):
+def reset_password_get(token: str = ""):
     if not token:
-        return RedirectResponse(url="/forgot-password?error=Missing+reset+token", status_code=303)
+        return RedirectResponse(url="/forgot-password", status_code=303)
     with get_db() as conn:
         row = conn.execute(
             "SELECT user_id, expires_at FROM password_reset_tokens WHERE token = ?", (_hash_token(token),)
@@ -422,15 +401,14 @@ def reset_password_get(token: str = "", error: str = ""):
 </body>
 </html>
 """
-    error_banner = f'<div class="alert">{html.escape(error)}</div>' if error else ""
     return f"""<!DOCTYPE html>
 <html>
 <head>{PAGE_STYLE}<title>Reset Password</title></head>
 <body>
   <div class="container">
     <h1>Reset Password</h1>
-    {error_banner}
-    <form method="post" action="/reset-password">
+    <form method="post" action="/reset-password" data-ajax>
+      <div class="form-error" style="display:none"></div>
       <input type="hidden" name="token" value="{html.escape(token)}">
       <div class="form-group">
         <label for="new_password">New Password</label>
@@ -457,32 +435,22 @@ def reset_password_post(
     confirm_password: str = Form(""),
 ):
     if not token:
-        return RedirectResponse(url="/forgot-password?error=Missing+reset+token", status_code=303)
+        return JSONResponse({"ok": False, "error": "Missing reset token"}, status_code=400)
     if len(token) > 200:
-        return RedirectResponse(url="/forgot-password?error=Reset+link+expired+or+invalid", status_code=303)
+        return JSONResponse({"ok": False, "error": "Reset link expired or invalid"}, status_code=400)
     if len(new_password) > 1000:
-        return RedirectResponse(
-            url=f"/reset-password?token={token}&error=Password+is+too+long", status_code=303
-        )
+        return JSONResponse({"ok": False, "error": "Password is too long"}, status_code=400)
     with get_db() as conn:
         row = conn.execute(
             "SELECT user_id, expires_at FROM password_reset_tokens WHERE token = ?", (_hash_token(token),)
         ).fetchone()
     if not row or row["expires_at"] < int(time()):
-        return RedirectResponse(
-            url="/forgot-password?error=Reset+link+expired+or+invalid", status_code=303
-        )
+        return JSONResponse({"ok": False, "error": "Reset link expired or invalid"}, status_code=400)
     pw_ok, pw_err = _password_meets_complexity(new_password)
     if not pw_ok:
-        return RedirectResponse(
-            url=f"/reset-password?token={token}&error={pw_err.replace(' ', '+')}",
-            status_code=303,
-        )
+        return JSONResponse({"ok": False, "error": pw_err}, status_code=400)
     if new_password != confirm_password:
-        return RedirectResponse(
-            url=f"/reset-password?token={token}&error=Passwords+do+not+match",
-            status_code=303,
-        )
+        return JSONResponse({"ok": False, "error": "Passwords do not match"}, status_code=400)
     new_hash = _hash_password(new_password)
     with get_db() as conn:
         profile = conn.execute(
@@ -497,13 +465,25 @@ def reset_password_post(
     if profile:
         _clear_username_lockout(profile["username"])
     _audit_log("password_reset", user_id=row["user_id"])
-    return RedirectResponse(url="/login?success=Password+updated.+Please+log+in.", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Password updated. Please log in.", "redirect": "/login"})
 
 
 @router.get("/verify-email", response_class=HTMLResponse)
 def verify_email_get(request: Request, token: str = ""):
     if not token or len(token) > 200:
-        return RedirectResponse(url="/login?error=Invalid+verification+link", status_code=303)
+        return f"""<!DOCTYPE html>
+<html>
+<head>{PAGE_STYLE}<title>Verify Email</title></head>
+<body>
+  <div class="container">
+    <h1>Email Verification</h1>
+    <div class="alert">This verification link is invalid. You can request a new one
+      from your <a href="/profile" style="color:#b91c1c;">profile page</a>.
+    </div>
+  </div>
+</body>
+</html>
+"""
     with get_db() as conn:
         row = conn.execute(
             "SELECT user_id, expires_at FROM email_verification_tokens WHERE token = ?", (_hash_token(token),)
@@ -553,7 +533,8 @@ def verify_pending_get():
       We sent a verification link to <strong>{email_val}</strong>.
       Click the link in that email to activate your account.
     </p>
-    <form method="post" action="/profile/resend-verification">
+    <form method="post" action="/profile/resend-verification" data-ajax>
+      <div class="form-error" style="display:none"></div>
       <button type="submit" class="btn-primary" style="width:100%;">Resend verification email</button>
     </form>
     <p style="text-align:center; margin-top:20px; font-size:13px; color:#6b7280;">

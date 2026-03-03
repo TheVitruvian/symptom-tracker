@@ -172,11 +172,67 @@
     injectCsrfIntoForms();
   }
 
+  function getCsrfToken() {
+    return getCookie("csrf_token");
+  }
+
+  function ajaxSubmit(form) {
+    var errEl = form.querySelector(".form-error");
+    if (errEl) { errEl.style.display = "none"; errEl.textContent = ""; }
+    var btn = form.querySelector("[type=submit]");
+    if (btn) btn.disabled = true;
+    fetch(form.action || window.location.pathname, {
+      method: form.method || "POST",
+      headers: { "X-CSRF-Token": getCsrfToken() },
+      body: new FormData(form)
+    }).then(function(res) {
+      return res.json();
+    }).then(function(data) {
+      if (!data.ok) {
+        if (errEl) { errEl.textContent = data.error || "An error occurred"; errEl.style.display = "block"; }
+        else showToast(data.error || "An error occurred", "error");
+      } else {
+        if (data.toast) showToast(data.toast, "success");
+        if (data.reload || data.redirect) {
+          var delay = data.toast ? 1200 : 0;
+          setTimeout(function() {
+            if (data.reload) window.location.reload();
+            else window.location.href = data.redirect;
+          }, delay);
+        }
+      }
+    }).catch(function() {
+      if (errEl) { errEl.textContent = "Network error. Please try again."; errEl.style.display = "block"; }
+      else showToast("Network error. Please try again.", "error");
+    }).finally(function() {
+      if (btn) btn.disabled = false;
+    });
+  }
+
+  function bindAjaxForms(root) {
+    (root || document).querySelectorAll("form[data-ajax]").forEach(function(f) {
+      if (f._ajaxBound) return;
+      f._ajaxBound = true;
+      f.addEventListener("submit", function(e) {
+        e.preventDefault();
+        ajaxSubmit(f);
+      });
+    });
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function() { bindAjaxForms(); });
+  } else {
+    bindAjaxForms();
+  }
+  window.bindAjaxForms = bindAjaxForms;
+
   window._navToggle = navToggle;
   window._clientNowLocal = clientNowLocal;
   window._applyClientTimeDefaults = applyClientTimeDefaults;
   window._getCookie = getCookie;
   window._showToast = showToast;
+  window.ajaxSubmit = ajaxSubmit;
+  window.getCsrfToken = getCsrfToken;
 
   setCookie("tz_offset", String(new Date().getTimezoneOffset()));
   try {

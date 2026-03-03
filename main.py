@@ -87,13 +87,15 @@ async def auth_middleware(request: Request, call_next):
         elif path not in PUBLIC_PATHS and not path.startswith("/physician"):
             # Require CSRF token for authenticated patient form POSTs.
             # Regular forms send token as a hidden field (body); multipart forms
-            # (file uploads) send it as a query param since the body is opaque.
-            # Excludes public routes (login/signup) and physician routes.
-            if not _csrf_query_valid(request) and not await _csrf_form_valid(request):
+            # (file uploads) send it as a query param; AJAX requests send it as
+            # the X-CSRF-Token header. Excludes public routes and physician routes.
+            if not _csrf_query_valid(request) and not _csrf_header_valid(request) and not await _csrf_form_valid(request):
                 return RedirectResponse(url="/login?error=Forbidden+request", status_code=303)
     # Physician-only routes
     if path.startswith("/physician"):
-        if path in {"/physician/login", "/physician/signup"}:
+        if path in {"/physician/login", "/physician/signup",
+                    "/physician/forgot-password", "/physician/forgot-username",
+                    "/physician/reset-password"}:
             return _ensure_csrf_cookie(request, await call_next(request))
         physician_user = _get_authenticated_physician(request)
         if not physician_user:

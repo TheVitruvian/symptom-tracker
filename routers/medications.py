@@ -305,18 +305,12 @@ def medications_create(
     notes: str = Form(""),
     med_date: str = Form(...),
 ):
-    return RedirectResponse(
-        url="/medications/schedules",
-        status_code=303,
-    )
+    return JSONResponse({"ok": True, "redirect": "/medications/schedules"})
 
 
 @router.post("/medications/delete")
 def medications_delete(id: int = Form(...)):
-    return RedirectResponse(
-        url="/medications",
-        status_code=303,
-    )
+    return JSONResponse({"ok": True, "redirect": "/medications"})
 
 
 @router.get("/medications/{med_id}/edit", response_class=HTMLResponse)
@@ -335,7 +329,4 @@ def medications_edit_post(
     notes: str = Form(""),
     med_date: str = Form(...),
 ):
-    return RedirectResponse(
-        url="/medications",
-        status_code=303,
-    )
+    return JSONResponse({"ok": True, "redirect": "/medications"})

@@ -143,6 +143,9 @@ def init_db():
                 password_hash TEXT NOT NULL
             )
         """)
+        physician_cols = [row[1] for row in conn.execute("PRAGMA table_info(physicians)")]
+        if "email" not in physician_cols:
+            conn.execute("ALTER TABLE physicians ADD COLUMN email TEXT NOT NULL DEFAULT ''")
         # Physician–patient junction table
         conn.execute("""
             CREATE TABLE IF NOT EXISTS physician_patients (
@@ -214,6 +217,14 @@ def init_db():
             CREATE TABLE IF NOT EXISTS email_verification_tokens (
                 token      TEXT    PRIMARY KEY,
                 user_id    INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            )
+        """)
+        # Physician password reset tokens
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS physician_reset_tokens (
+                token      TEXT    PRIMARY KEY,
+                physician_id INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL
             )
         """)

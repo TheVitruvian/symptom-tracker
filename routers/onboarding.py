@@ -2,7 +2,7 @@ import html
 from datetime import date
 
 from fastapi import APIRouter, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from config import _current_user_id, FREQ_LABELS
 from db import get_db
@@ -59,19 +59,18 @@ def _shell(step: int, title: str, body: str) -> str:
 # ---------------------------------------------------------------------------
 
 @router.get("/onboarding/1", response_class=HTMLResponse)
-def onboarding_step1_get(error: str = ""):
+def onboarding_step1_get():
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute("SELECT name, dob FROM user_profile WHERE id = ?", (uid,)).fetchone()
     name_val = html.escape(row["name"] if row else "")
     dob_val = html.escape(row["dob"] if row else "")
-    error_banner = f'<div class="alert">{html.escape(error)}</div>' if error else ""
     body = f"""
-    {error_banner}
     <p style="color:#555; font-size:14px; margin-bottom:20px; text-align:center;">
       Let's start with some basic information about you.
     </p>
-    <form method="post" action="/onboarding/1">
+    <form method="post" action="/onboarding/1" data-ajax>
+      <div class="form-error" style="display:none"></div>
       <div class="form-group">
         <label for="name">Your name</label>
         <input type="text" id="name" name="name" value="{name_val}"
@@ -89,17 +88,13 @@ def onboarding_step1_get(error: str = ""):
 @router.post("/onboarding/1")
 def onboarding_step1_post(name: str = Form(""), dob: str = Form("")):
     if len(name) > 120:
-        return RedirectResponse(
-            url="/onboarding/1?error=Name+must+be+120+characters+or+fewer", status_code=303
-        )
+        return JSONResponse({"ok": False, "error": "Name must be 120 characters or fewer"}, status_code=400)
     if dob:
         from datetime import datetime
         try:
             datetime.strptime(dob, "%Y-%m-%d")
         except ValueError:
-            return RedirectResponse(
-                url="/onboarding/1?error=Invalid+date+of+birth", status_code=303
-            )
+            return JSONResponse({"ok": False, "error": "Invalid date of birth"}, status_code=400)
     uid = _current_user_id.get()
     with get_db() as conn:
         conn.execute(
@@ -107,7 +102,7 @@ def onboarding_step1_post(name: str = Form(""), dob: str = Form("")):
             (name.strip(), dob, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/onboarding/2", status_code=303)
+    return JSONResponse({"ok": True, "redirect": "/onboarding/2"})
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +119,8 @@ def onboarding_step2_get():
     <p style="color:#555; font-size:14px; margin-bottom:20px; text-align:center;">
       List any known medical conditions. This helps give context to your symptom data.
     </p>
-    <form method="post" action="/onboarding/2">
+    <form method="post" action="/onboarding/2" data-ajax>
+      <div class="form-error" style="display:none"></div>
       <div class="form-group">
         <label for="conditions">Known conditions</label>
         <textarea id="conditions" name="conditions" rows="4"
@@ -138,9 +134,7 @@ def onboarding_step2_get():
 @router.post("/onboarding/2")
 def onboarding_step2_post(conditions: str = Form("")):
     if len(conditions) > 2000:
-        return RedirectResponse(
-            url="/onboarding/2?error=Conditions+must+be+2000+characters+or+fewer", status_code=303
-        )
+        return JSONResponse({"ok": False, "error": "Conditions must be 2000 characters or fewer"}, status_code=400)
     uid = _current_user_id.get()
     with get_db() as conn:
         conn.execute(
@@ -148,7 +142,7 @@ def onboarding_step2_post(conditions: str = Form("")):
             (conditions.strip(), uid),
         )
         conn.commit()
-    return RedirectResponse(url="/onboarding/3", status_code=303)
+    return JSONResponse({"ok": True, "redirect": "/onboarding/3"})
 
 
 # ---------------------------------------------------------------------------
@@ -156,18 +150,17 @@ def onboarding_step2_post(conditions: str = Form("")):
 # ---------------------------------------------------------------------------
 
 @router.get("/onboarding/3", response_class=HTMLResponse)
-def onboarding_step3_get(error: str = ""):
-    error_banner = f'<div class="alert">{html.escape(error)}</div>' if error else ""
+def onboarding_step3_get():
     freq_options = "".join(
         f'<option value="{k}"{"selected" if k == "once_daily" else ""}>{v}</option>'
         for k, v in FREQ_LABELS.items()
     )
     body = f"""
-    {error_banner}
     <p style="color:#555; font-size:14px; margin-bottom:20px; text-align:center;">
       Add your first medication to start tracking adherence.
     </p>
-    <form method="post" action="/onboarding/3">
+    <form method="post" action="/onboarding/3" data-ajax>
+      <div class="form-error" style="display:none"></div>
       <div class="form-group">
         <label for="med_name">Medication name</label>
         <input type="text" id="med_name" name="med_name"
@@ -197,14 +190,9 @@ def onboarding_step3_post(
     med_frequency: str = Form("once_daily"),
 ):
     if len(med_name) > 120:
-        return RedirectResponse(
-            url="/onboarding/3?error=Medication+name+must+be+120+characters+or+fewer",
-            status_code=303,
-        )
+        return JSONResponse({"ok": False, "error": "Medication name must be 120 characters or fewer"}, status_code=400)
     if len(med_dose) > 80:
-        return RedirectResponse(
-            url="/onboarding/3?error=Dose+must+be+80+characters+or+fewer", status_code=303
-        )
+        return JSONResponse({"ok": False, "error": "Dose must be 80 characters or fewer"}, status_code=400)
     if med_frequency not in FREQ_LABELS:
         med_frequency = "once_daily"
     uid = _current_user_id.get()
@@ -221,7 +209,7 @@ def onboarding_step3_post(
             "UPDATE user_profile SET onboarding_complete=1 WHERE id=?", (uid,)
         )
         conn.commit()
-    return RedirectResponse(url="/onboarding/done", status_code=303)
+    return JSONResponse({"ok": True, "redirect": "/onboarding/done"})
 
 
 # ---------------------------------------------------------------------------

@@ -208,7 +208,7 @@ def _nav_bar(active: str = "") -> str:
             '<div style="background:#fef9c3; border-bottom:1px solid #fde047; padding:6px 24px;'
             ' display:flex; align-items:center; justify-content:space-between; font-size:13px;">'
             f'<span>&#128104;&#8205;&#9877;&#65039; Physician view &mdash; <strong>{html.escape(patient_name)}</strong></span>'
-            '<form method="post" action="/physician/exit" style="margin:0;">'
+            '<form method="post" action="/physician/exit" style="margin:0;" data-ajax>'
             '<button type="submit" style="background:#854d0e; color:#fff; border:none; border-radius:6px;'
             ' padding:4px 12px; font-size:13px; cursor:pointer; font-family:inherit;">'
             '&#8592; Exit to portal</button>'
@@ -250,7 +250,7 @@ def _nav_bar(active: str = "") -> str:
         ' font-size:13px; font-weight:700; padding:6px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Medication</a>'
         + dlnk("/profile", "Profile", "profile")
-        + f'<form method="post" action="{logout_action}" style="margin:0;">'
+        + f'<form method="post" action="{logout_action}" style="margin:0;" data-ajax>'
         '<button type="submit" style="background:transparent; border:1px solid rgba(255,255,255,0.4);'
         ' color:rgba(255,255,255,0.7); border-radius:6px; padding:4px 12px;'
         ' font-size:13px; cursor:pointer; font-family:inherit;">Log Out</button>'
@@ -273,7 +273,7 @@ def _nav_bar(active: str = "") -> str:
         '<a href="/medications/today" style="background:#7c3aed; color:#fff; text-decoration:none;'
         ' font-size:13px; font-weight:700; padding:7px 14px; border-radius:20px; white-space:nowrap;">'
         '+ Log Medication</a>'
-        f'<form method="post" action="{logout_action}" style="margin:0;">'
+        f'<form method="post" action="{logout_action}" style="margin:0;" data-ajax>'
         '<button type="submit" style="background:transparent; border:1px solid rgba(255,255,255,0.4);'
         ' color:rgba(255,255,255,0.7); border-radius:6px; padding:6px 12px;'
         ' font-size:13px; cursor:pointer; font-family:inherit;">Log Out</button>'
@@ -289,8 +289,8 @@ def _nav_bar(active: str = "") -> str:
   function removeWarning(){{if(modal){{modal.remove();modal=null;}}}}
   function doLogout(){{
     removeWarning();
-    var f=document.createElement('form');f.method='post';f.action=logoutUrl;
-    document.body.appendChild(f);f.submit();
+    var token=document.cookie.split('; ').reduce(function(v,c){{var p=c.split('=');return p[0]==='csrf_token'?decodeURIComponent(p[1]):v;}},'');
+    fetch(logoutUrl,{{method:'POST',headers:{{'X-CSRF-Token':token}}}}).finally(function(){{window.location.href='/login';}});
   }}
   function showWarning(){{
     modal=document.createElement('div');
@@ -326,7 +326,7 @@ PAGE_STYLE = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/png" href="/static/favicon.png">
-  <script defer src="/static/app.js?v=1"></script>
+  <script defer src="/static/app.js?v=3"></script>
   <style>
     body { font-family: system-ui, sans-serif; background: #f5f5f5; margin: 0; padding: 0; color: #222; }
     .container { max-width: 560px; margin: 0 auto; padding: 24px; }
@@ -369,6 +369,8 @@ PAGE_STYLE = """
                   margin-top: 4px; }
     .alert { background: #fee2e2; border: 1px solid #fca5a5; color: #b91c1c;
              border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
+    .form-error { color: #b91c1c; background: #fee2e2; border: 1px solid #fca5a5;
+                  border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 14px; }
     .empty { color: #888; font-style: italic; margin-top: 16px; }
     /* ── Nav responsive ────────────────────────────────────────────────── */
     .nav-desktop-links { flex: 1; display: flex; gap: 20px; }
@@ -429,7 +431,50 @@ PAGE_STYLE = """
         }); });
       }
       window._showToast = showToast;
+
+      function _getCsrfToken() {
+        return document.cookie.split('; ').reduce(function(v, c) {
+          var p = c.split('='); return p[0] === 'csrf_token' ? decodeURIComponent(p[1]) : v;
+        }, '');
+      }
+
+      function _ajaxSubmit(form) {
+        var errEl = form.querySelector('.form-error');
+        if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+        var btn = form.querySelector('[type=submit]');
+        if (btn) btn.disabled = true;
+        var fn = window.ajaxSubmit;
+        if (fn) { fn(form); return; }
+        fetch(form.action || location.pathname, {
+          method: form.method || 'POST',
+          headers: { 'X-CSRF-Token': _getCsrfToken() },
+          body: new FormData(form)
+        }).then(function(r) { return r.json(); }).then(function(d) {
+          if (!d.ok) {
+            if (errEl) { errEl.textContent = d.error || 'An error occurred'; errEl.style.display = 'block'; }
+            else showToast(d.error || 'An error occurred', 'error');
+          } else {
+            if (d.toast) showToast(d.toast, 'success');
+            if (d.reload || d.redirect) setTimeout(function() {
+              if (d.reload) location.reload(); else location.href = d.redirect;
+            }, d.toast ? 1200 : 0);
+          }
+        }).catch(function() {
+          if (errEl) { errEl.textContent = 'Network error. Please try again.'; errEl.style.display = 'block'; }
+          else showToast('Network error. Please try again.', 'error');
+        }).finally(function() { if (btn) btn.disabled = false; });
+      }
+
+      function _bindForms() {
+        document.querySelectorAll('form[data-ajax]').forEach(function(f) {
+          if (f._ajaxBound) return;
+          f._ajaxBound = true;
+          f.addEventListener('submit', function(e) { e.preventDefault(); _ajaxSubmit(f); });
+        });
+      }
+
       document.addEventListener('DOMContentLoaded', function() {
+        _bindForms();
         var params = new URLSearchParams(location.search);
         var msg = params.get('_toast'), type = params.get('_toast_type') || 'success';
         if (!msg) return;

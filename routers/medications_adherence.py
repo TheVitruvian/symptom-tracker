@@ -1309,9 +1309,8 @@ def api_schedules_resume(sched_id: int):
 
 
 @router.get("/medications/schedules/new", response_class=HTMLResponse)
-def schedules_new(error: str = ""):
+def schedules_new():
     from routers.medications_utils import _MED_DATALIST
-    error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
     today_str = _today_local().isoformat()
     freq_options = "".join(
         f'<option value="{k}">{html.escape(v)}</option>' for k, v in FREQ_LABELS.items()
@@ -1323,9 +1322,9 @@ def schedules_new(error: str = ""):
   {_nav_bar('meds')}
   <div class="container">
     <h1>Add Medication Schedule</h1>
-    {error_html}
     <div class="card">
-      <form method="post" action="/medications/schedules">
+      <form method="post" action="/medications/schedules" data-ajax>
+        <div class="form-error" style="display:none"></div>
         <div class="form-group">
           <label for="name">Medication name <span style="color:#ef4444">*</span></label>
           <input type="text" id="name" name="name" required list="med-suggestions" autocomplete="off">
@@ -1367,22 +1366,22 @@ def schedules_create(
     notes: str = Form(""),
 ):
     if not name.strip():
-        return RedirectResponse(url="/medications/schedules/new?error=Medication+name+is+required", status_code=303)
+        return JSONResponse({"ok": False, "error": "Medication name is required"}, status_code=400)
     if len(name) > 120:
-        return RedirectResponse(url="/medications/schedules/new?error=Medication+name+must+be+120+characters+or+fewer", status_code=303)
+        return JSONResponse({"ok": False, "error": "Medication name must be 120 characters or fewer"}, status_code=400)
     if len(dose) > 80:
-        return RedirectResponse(url="/medications/schedules/new?error=Dose+must+be+80+characters+or+fewer", status_code=303)
+        return JSONResponse({"ok": False, "error": "Dose must be 80 characters or fewer"}, status_code=400)
     if len(notes) > 1000:
-        return RedirectResponse(url="/medications/schedules/new?error=Notes+must+be+1000+characters+or+fewer", status_code=303)
+        return JSONResponse({"ok": False, "error": "Notes must be 1000 characters or fewer"}, status_code=400)
     if frequency not in VALID_FREQUENCIES:
-        return RedirectResponse(url="/medications/schedules/new?error=Invalid+frequency", status_code=303)
+        return JSONResponse({"ok": False, "error": "Invalid frequency"}, status_code=400)
     try:
         sd = date.fromisoformat(start_date)
     except ValueError:
-        return RedirectResponse(url="/medications/schedules/new?error=Invalid+start+date", status_code=303)
+        return JSONResponse({"ok": False, "error": "Invalid start date"}, status_code=400)
     client_now_dt = _client_now_or_server()
     if sd > client_now_dt.date():
-        return RedirectResponse(url="/medications/schedules/new?error=Start+date+cannot+be+in+the+future", status_code=303)
+        return JSONResponse({"ok": False, "error": "Start date cannot be in the future"}, status_code=400)
     uid = _current_user_id.get()
     created_at = _to_utc_storage(client_now_dt)
     with get_db() as conn:
@@ -1392,11 +1391,11 @@ def schedules_create(
             (uid, name.strip(), dose.strip(), notes.strip(), frequency, start_date, created_at),
         )
         conn.commit()
-    return RedirectResponse(url="/medications/schedules?_toast=Schedule+added", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Schedule added", "redirect": "/medications/schedules"})
 
 
 @router.get("/medications/schedules/{sched_id}/edit", response_class=HTMLResponse)
-def schedules_edit_get(sched_id: int, error: str = ""):
+def schedules_edit_get(sched_id: int):
     from routers.medications_utils import _MED_DATALIST
     uid = _current_user_id.get()
     with get_db() as conn:
@@ -1406,7 +1405,6 @@ def schedules_edit_get(sched_id: int, error: str = ""):
     if row is None:
         return RedirectResponse(url="/medications/schedules", status_code=303)
     s = dict(row)
-    error_html = f'<div class="alert">{html.escape(error)}</div>' if error else ""
     today_str = _today_local().isoformat()
     freq_options = "".join(
         f'<option value="{k}"{" selected" if k == s["frequency"] else ""}>{html.escape(v)}</option>'
@@ -1419,9 +1417,9 @@ def schedules_edit_get(sched_id: int, error: str = ""):
   {_nav_bar('meds')}
   <div class="container">
     <h1>Edit Schedule</h1>
-    {error_html}
     <div class="card">
-      <form method="post" action="/medications/schedules/{sched_id}/edit">
+      <form method="post" action="/medications/schedules/{sched_id}/edit" data-ajax>
+        <div class="form-error" style="display:none"></div>
         <div class="form-group">
           <label for="name">Medication name <span style="color:#ef4444">*</span></label>
           <input type="text" id="name" name="name" value="{html.escape(s['name'])}"
@@ -1469,21 +1467,21 @@ def schedules_edit_post(
     notes: str = Form(""),
 ):
     if not name.strip():
-        return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Medication+name+is+required", status_code=303)
+        return JSONResponse({"ok": False, "error": "Medication name is required"}, status_code=400)
     if len(name) > 120:
-        return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Medication+name+must+be+120+characters+or+fewer", status_code=303)
+        return JSONResponse({"ok": False, "error": "Medication name must be 120 characters or fewer"}, status_code=400)
     if len(dose) > 80:
-        return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Dose+must+be+80+characters+or+fewer", status_code=303)
+        return JSONResponse({"ok": False, "error": "Dose must be 80 characters or fewer"}, status_code=400)
     if len(notes) > 1000:
-        return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Notes+must+be+1000+characters+or+fewer", status_code=303)
+        return JSONResponse({"ok": False, "error": "Notes must be 1000 characters or fewer"}, status_code=400)
     if frequency not in VALID_FREQUENCIES:
-        return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Invalid+frequency", status_code=303)
+        return JSONResponse({"ok": False, "error": "Invalid frequency"}, status_code=400)
     try:
         sd = date.fromisoformat(start_date)
     except ValueError:
-        return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Invalid+start+date", status_code=303)
+        return JSONResponse({"ok": False, "error": "Invalid start date"}, status_code=400)
     if sd > _client_today_or_server():
-        return RedirectResponse(url=f"/medications/schedules/{sched_id}/edit?error=Start+date+cannot+be+in+the+future", status_code=303)
+        return JSONResponse({"ok": False, "error": "Start date cannot be in the future"}, status_code=400)
     uid = _current_user_id.get()
     with get_db() as conn:
         conn.execute(
@@ -1492,7 +1490,7 @@ def schedules_edit_post(
             (name.strip(), dose.strip(), notes.strip(), frequency, start_date, sched_id, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/medications/schedules?_toast=Schedule+updated", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Schedule updated", "redirect": "/medications/schedules"})
 
 
 @router.post("/medications/schedules/{sched_id}/deactivate")
@@ -1503,7 +1501,7 @@ def schedules_deactivate(sched_id: int):
             "UPDATE medication_schedules SET active=0 WHERE id=? AND user_id=?", (sched_id, uid)
         )
         conn.commit()
-    return RedirectResponse(url="/medications/schedules?_toast=Schedule+removed", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Schedule removed", "reload": True})
 
 
 # ── Dose logging actions ──────────────────────────────────────────────────────

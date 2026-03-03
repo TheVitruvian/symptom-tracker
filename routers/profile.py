@@ -137,7 +137,7 @@ def _physician_access_card(share_code: str, linked_physicians, access_log) -> st
         <div style="display:flex; align-items:center; justify-content:space-between;
                     padding:8px 0; border-bottom:1px solid #e0f2fe;">
           <span style="font-size:14px; color:#0c4a6e; font-weight:500;">{ph_name}</span>
-          <form method="post" action="/profile/physicians/{ph_id}/revoke" style="margin:0;">
+          <form method="post" action="/profile/physicians/{ph_id}/revoke" style="margin:0;" data-ajax>
             <button type="submit"
               style="background:none; border:1px solid #ef4444; border-radius:6px; color:#ef4444;
                      font-size:12px; padding:4px 10px; cursor:pointer; font-family:inherit;"
@@ -195,7 +195,7 @@ def _physician_access_card(share_code: str, linked_physicians, access_log) -> st
       </p>
       <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
         <code style="font-size:20px; font-weight:700; letter-spacing:3px; color:#1e3a8a;">{html.escape(share_code)}</code>
-        <form method="post" action="/profile/share-code/regenerate" style="margin:0;">
+        <form method="post" action="/profile/share-code/regenerate" style="margin:0;" data-ajax>
           <button type="submit"
             style="background:none; border:1px solid #0369a1; border-radius:6px; color:#0369a1;
                    font-size:12px; padding:5px 12px; cursor:pointer; font-family:inherit;"
@@ -210,7 +210,7 @@ def _physician_access_card(share_code: str, linked_physicians, access_log) -> st
 
 
 @router.get("/profile", response_class=HTMLResponse)
-def profile_get(error: str = ""):
+def profile_get():
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute("SELECT * FROM user_profile WHERE id = ?", (uid,)).fetchone()
@@ -250,7 +250,8 @@ def profile_get(error: str = ""):
       <summary style="cursor:pointer; font-size:14px; font-weight:600; color:#374151;">
         Change Password
       </summary>
-      <form method="post" action="/profile/password" style="margin-top:12px;">
+      <form method="post" action="/profile/password" style="margin-top:12px;" data-ajax>
+        <div class="form-error" style="display:none"></div>
         <div class="form-group">
           <label for="current_password">Current Password</label>
           <input type="password" id="current_password" name="current_password"
@@ -269,7 +270,6 @@ def profile_get(error: str = ""):
         <button type="submit" class="btn-primary">Change Password</button>
       </form>
     </details>"""
-    top_banner = f'<div class="alert">{html.escape(error)}</div>' if error else ""
     email_val = p.get("email", "")
     if email_val and not p.get("email_verified"):
         verify_banner = (
@@ -278,7 +278,7 @@ def profile_get(error: str = ""):
             f' align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">'
             f'<span>&#9888; Your email <strong>{html.escape(email_val)}</strong> is not verified.'
             f' Check your inbox for a verification link.</span>'
-            f'<form method="post" action="/profile/resend-verification" style="margin:0;">'
+            f'<form method="post" action="/profile/resend-verification" style="margin:0;" data-ajax>'
             f'<button type="submit" style="background:none; border:1px solid #854d0e; border-radius:5px;'
             f' color:#854d0e; font-size:12px; padding:4px 10px; cursor:pointer; font-family:inherit;">'
             f'Resend</button></form></div>'
@@ -292,7 +292,7 @@ def profile_get(error: str = ""):
       <img src="/profile/photo" alt="Profile photo"
         style="width:120px; height:120px; border-radius:50%; object-fit:cover; border:3px solid #e5e7eb;">
       <div style="margin-top:8px;">
-        <form method="post" action="/profile/photo" enctype="multipart/form-data" style="display:inline;">
+        <form method="post" action="/profile/photo" enctype="multipart/form-data" style="display:inline;" data-ajax>
           <label style="cursor:pointer; font-size:13px; color:#1e3a8a; font-weight:500;">
             Change photo
             <input type="file" name="photo" accept="image/*" style="display:none;"
@@ -300,7 +300,7 @@ def profile_get(error: str = ""):
           </label>
         </form>
         &nbsp;&middot;&nbsp;
-        <form method="post" action="/profile/photo/delete" style="display:inline;">
+        <form method="post" action="/profile/photo/delete" style="display:inline;" data-ajax>
           <button type="submit" style="background:none; border:none; cursor:pointer;
             font-size:13px; color:#dc2626; font-weight:500; padding:0;"
             onclick="return confirm('Remove your profile photo?')">Remove</button>
@@ -318,7 +318,7 @@ def profile_get(error: str = ""):
         </svg>
       </div>
       <div style="margin-top:8px;">
-        <form method="post" action="/profile/photo" enctype="multipart/form-data" style="display:inline;">
+        <form method="post" action="/profile/photo" enctype="multipart/form-data" style="display:inline;" data-ajax>
           <label style="cursor:pointer; font-size:13px; color:#1e3a8a; font-weight:500;">
             Upload photo
             <input type="file" name="photo" accept="image/*" style="display:none;"
@@ -336,10 +336,10 @@ def profile_get(error: str = ""):
   {_nav_bar('profile')}
   <div class="container">
     <h1>My Profile</h1>
-    {top_banner}
     {verify_banner}
     {photo_html}
-    <form method="post" action="/profile" style="margin-top:16px;">
+    <form method="post" action="/profile" style="margin-top:16px;" data-ajax>
+      <div class="form-error" style="display:none"></div>
       <div class="form-group">
         <label for="name">Name</label>
         <input type="text" id="name" name="name" value="{html.escape(p['name'])}" placeholder="Your name">
@@ -379,22 +379,22 @@ def profile_update(
     email: str = Form(""),
 ):
     if len(name) > 120:
-        return RedirectResponse(url="/profile?error=Name+must+be+120+characters+or+fewer", status_code=303)
+        return JSONResponse({"ok": False, "error": "Name must be 120 characters or fewer"}, status_code=400)
     if len(conditions) > 2000:
-        return RedirectResponse(url="/profile?error=Conditions+must+be+2000+characters+or+fewer", status_code=303)
+        return JSONResponse({"ok": False, "error": "Conditions must be 2000 characters or fewer"}, status_code=400)
     email_clean = normalize_email(email)
     if email_clean and not is_semantic_email(email_clean):
-        return RedirectResponse(url="/profile?error=Invalid+email+address", status_code=303)
+        return JSONResponse({"ok": False, "error": "Invalid email address"}, status_code=400)
     if len(email_clean) > 254:
-        return RedirectResponse(url="/profile?error=Email+address+is+too+long", status_code=303)
+        return JSONResponse({"ok": False, "error": "Email address is too long"}, status_code=400)
     if dob:
         try:
             datetime.strptime(dob, "%Y-%m-%d")
         except ValueError:
-            return RedirectResponse(url="/profile?error=Invalid+date+of+birth", status_code=303)
+            return JSONResponse({"ok": False, "error": "Invalid date of birth"}, status_code=400)
     uid = _current_user_id.get()
     if _physician_ctx.get() is not None:
-        return RedirectResponse(url="/profile?error=Physicians+cannot+modify+patient+credentials", status_code=303)
+        return JSONResponse({"ok": False, "error": "Physicians cannot modify patient data"}, status_code=403)
     with get_db() as conn:
         old_row = conn.execute("SELECT email FROM user_profile WHERE id = ?", (uid,)).fetchone()
         old_email = old_row["email"] if old_row else ""
@@ -423,7 +423,7 @@ def profile_update(
         base = str(request.base_url).rstrip("/")
         verify_url = f"{base}/verify-email?token={verify_token}"
         _send_verification_email(email_clean, verify_url)
-    return RedirectResponse(url="/profile?_toast=Profile+saved", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Profile saved"})
 
 
 @router.post("/profile/resend-verification")
@@ -432,7 +432,7 @@ def profile_resend_verification(request: Request):
     with get_db() as conn:
         row = conn.execute("SELECT email, email_verified FROM user_profile WHERE id = ?", (uid,)).fetchone()
     if not row or not row["email"] or row["email_verified"]:
-        return RedirectResponse(url="/profile", status_code=303)
+        return JSONResponse({"ok": True})
     email_clean = row["email"]
     with get_db() as conn:
         conn.execute("DELETE FROM email_verification_tokens WHERE user_id = ?", (uid,))
@@ -446,7 +446,7 @@ def profile_resend_verification(request: Request):
     base = str(request.base_url).rstrip("/")
     verify_url = f"{base}/verify-email?token={verify_token}"
     _send_verification_email(email_clean, verify_url)
-    return RedirectResponse(url="/profile?_toast=Verification+email+sent", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Verification email sent"})
 
 
 @router.post("/profile/password")
@@ -457,30 +457,30 @@ def profile_change_password(
     confirm_password: str = Form(""),
 ):
     if _physician_ctx.get() is not None:
-        return RedirectResponse(url="/profile?error=Physicians+cannot+modify+patient+credentials", status_code=303)
+        return JSONResponse({"ok": False, "error": "Physicians cannot modify patient credentials"}, status_code=403)
     uid = _current_user_id.get()
     with get_db() as conn:
         row = conn.execute(
             "SELECT username, password_hash FROM user_profile WHERE id = ?", (uid,)
         ).fetchone()
     if not row:
-        return RedirectResponse(url="/profile?error=User+not+found", status_code=303)
+        return JSONResponse({"ok": False, "error": "User not found"}, status_code=400)
     username, pw_hash = row["username"], row["password_hash"]
     if not _verify_password(current_password, pw_hash):
-        return RedirectResponse(url="/profile?error=Current+password+is+incorrect", status_code=303)
+        return JSONResponse({"ok": False, "error": "Current password is incorrect"}, status_code=400)
     if len(new_password) > 1000:
-        return RedirectResponse(url="/profile?error=New+password+is+too+long", status_code=303)
+        return JSONResponse({"ok": False, "error": "New password is too long"}, status_code=400)
     if len(new_password) < 8:
-        return RedirectResponse(url="/profile?error=New+password+must+be+at+least+8+characters", status_code=303)
+        return JSONResponse({"ok": False, "error": "New password must be at least 8 characters"}, status_code=400)
     if new_password != confirm_password:
-        return RedirectResponse(url="/profile?error=New+passwords+do+not+match", status_code=303)
+        return JSONResponse({"ok": False, "error": "New passwords do not match"}, status_code=400)
     new_hash = _hash_password(new_password)
     with get_db() as conn:
         conn.execute(
             "UPDATE user_profile SET password_hash = ? WHERE id = ?", (new_hash, uid)
         )
         conn.commit()
-    resp = RedirectResponse(url="/profile?_toast=Password+changed", status_code=303)
+    resp = JSONResponse({"ok": True, "toast": "Password changed"})
     _set_session_cookie(resp, request, username, new_hash)
     return resp
 
@@ -504,24 +504,24 @@ async def profile_photo_upload(photo: UploadFile = File(...)):
     uid = _current_user_id.get()
     data = await _read_limited_upload(photo, MAX_PHOTO_SIZE)
     if data is None:
-        return RedirectResponse(url="/profile?error=Photo+must+be+under+5+MB", status_code=303)
+        return JSONResponse({"ok": False, "error": "Photo must be under 5 MB"}, status_code=400)
     ext = _detect_image_ext(data)
     if not ext:
-        return RedirectResponse(url="/profile?error=Unsupported+image+format", status_code=303)
+        return JSONResponse({"ok": False, "error": "Unsupported image format"}, status_code=400)
     # Validate dimensions and strip EXIF/metadata via Pillow
     try:
         img = Image.open(io.BytesIO(data))
         if img.width > _MAX_IMAGE_DIMENSION or img.height > _MAX_IMAGE_DIMENSION:
-            return RedirectResponse(
-                url=f"/profile?error=Image+must+be+{_MAX_IMAGE_DIMENSION}px+or+smaller+in+each+dimension",
-                status_code=303,
+            return JSONResponse(
+                {"ok": False, "error": f"Image must be {_MAX_IMAGE_DIMENSION}px or smaller in each dimension"},
+                status_code=400,
             )
         buf = io.BytesIO()
         fmt = {"jpg": "JPEG", "png": "PNG", "gif": "GIF", "webp": "WEBP"}[ext]
         img.save(buf, format=fmt)
         data = buf.getvalue()
     except Exception:
-        return RedirectResponse(url="/profile?error=Could+not+process+image", status_code=303)
+        return JSONResponse({"ok": False, "error": "Could not process image"}, status_code=400)
     # Remove old photos for this user with different extensions
     for old_ext in _ALLOWED_PHOTO_TYPES.values():
         old_path = UPLOAD_DIR / f"profile_{uid}.{old_ext}"
@@ -534,7 +534,7 @@ async def profile_photo_upload(photo: UploadFile = File(...)):
             (ext, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/profile?_toast=Photo+updated", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Photo updated", "reload": True})
 
 
 @router.post("/profile/photo/delete")
@@ -548,7 +548,7 @@ def profile_photo_delete():
                 path.unlink()
         conn.execute("UPDATE user_profile SET photo_ext='' WHERE id=?", (uid,))
         conn.commit()
-    return RedirectResponse(url="/profile?_toast=Photo+removed", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Photo removed", "reload": True})
 
 
 @router.post("/profile/sync-medications")
@@ -561,7 +561,7 @@ def profile_sync_medications():
             (meds_text, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/profile?_toast=Medications+synced", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Medications synced"})
 
 
 @router.post("/profile/physicians/{physician_id}/revoke")
@@ -573,7 +573,7 @@ def profile_revoke_physician(physician_id: int):
             (physician_id, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/profile?_toast=Physician+access+revoked", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Physician access revoked", "reload": True})
 
 
 @router.post("/profile/share-code/regenerate")
@@ -586,4 +586,4 @@ def profile_regenerate_share_code():
             (new_code, uid),
         )
         conn.commit()
-    return RedirectResponse(url="/profile?_toast=Share+code+regenerated", status_code=303)
+    return JSONResponse({"ok": True, "toast": "Share code regenerated", "reload": True})
