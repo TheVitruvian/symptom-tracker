@@ -25,7 +25,7 @@ from security import (
     _csrf_form_valid,
     _is_same_origin,
 )
-from routers import auth, symptoms, symptoms_analytics, medications, medications_adherence, onboarding, profile, physician
+from routers import auth, symptoms, symptoms_analytics, medications, medications_adherence, onboarding, profile, physician, insights
 
 # Startup
 init_db()
@@ -213,3 +213,4 @@ app.include_router(medications_adherence.router)
 app.include_router(onboarding.router)
 app.include_router(profile.router)
 app.include_router(physician.router)
+app.include_router(insights.router)

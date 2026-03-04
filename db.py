@@ -228,6 +228,14 @@ def init_db():
                 expires_at INTEGER NOT NULL
             )
         """)
+        # AI-generated health summaries (cached per user, refreshed after 24h)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ai_insights (
+                user_id    INTEGER PRIMARY KEY,
+                summary    TEXT    NOT NULL DEFAULT '',
+                generated_at TEXT  NOT NULL DEFAULT ''
+            )
+        """)
         # Security audit log
         conn.execute("""
             CREATE TABLE IF NOT EXISTS security_audit_log (

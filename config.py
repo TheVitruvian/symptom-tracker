@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-DB_PATH = "symptoms.db"
+DB_PATH = os.environ.get("DB_PATH", "symptoms.db")
 SECRET_KEY_PATH = Path(".app_secret_key")
 SESSION_TTL_SECONDS = 60 * 60 * 8   # 8 hours
 INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000  # 30 minutes
@@ -20,7 +20,7 @@ _physician_ctx:   ContextVar[Optional[str]] = ContextVar("_physician_ctx",   def
 _client_now: ContextVar[Optional[datetime]] = ContextVar("_client_now", default=None)
 _client_tz_offset_min: ContextVar[Optional[int]] = ContextVar("_client_tz_offset_min", default=None)
 
-UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "uploads"))
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 PUBLIC_PATHS = {"/", "/login", "/signup", "/logout", "/forgot-password", "/forgot-username", "/reset-password", "/verify-email", "/api/check-username", "/api/check-email"}

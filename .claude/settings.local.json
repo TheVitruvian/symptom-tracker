@@ -9,7 +9,9 @@
       "Bash(pip install:*)",
       "Bash(.venv/bin/python3:*)",
       "Bash(git rm swaks)",
-      "Bash(grep -n \"background:#3b82f6\\\\|background:#2563eb\\\\|background:#1e3a8a\\\\|background:#7c3aed\\\\|background:#6d28d9\\\\|background:#a855f7\" /Users/alexhamlin/projects/hello-world/routers/*.py /Users/alexhamlin/projects/hello-world/ui.py)"
+      "Bash(grep -n \"background:#3b82f6\\\\|background:#2563eb\\\\|background:#1e3a8a\\\\|background:#7c3aed\\\\|background:#6d28d9\\\\|background:#a855f7\" /Users/alexhamlin/projects/hello-world/routers/*.py /Users/alexhamlin/projects/hello-world/ui.py)",
+      "Skill(claude-developer-platform)",
+      "Skill(claude-developer-platform:*)"
     ]
   }
 }

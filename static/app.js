@@ -240,6 +240,16 @@
     if (tz) setCookie("tz", tz);
   } catch (_) {}
 
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter") return;
+    var el = e.target;
+    if (el.tagName !== "INPUT" || el.type === "submit") return;
+    var form = el.closest("form[data-ajax]");
+    if (!form) return;
+    e.preventDefault();
+    form.requestSubmit();
+  });
+
   function setupNavAutoClose() {
     var menu = document.getElementById("nav-menu");
     if (!menu) return;

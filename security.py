@@ -27,6 +27,17 @@ from db import get_db
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Email configuration (read once at startup from environment / .env)
+_SMTP_HOST = os.environ.get("SMTP_HOST", "")
+_SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+_SMTP_USER = os.environ.get("SMTP_USER", "")
+_SMTP_PASS = os.environ.get("SMTP_PASSWORD", "")
+_SMTP_FROM = os.environ.get("SMTP_FROM", _SMTP_USER)
+_MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
+_MAILGUN_DOMAIN  = os.environ.get("MAILGUN_DOMAIN", "")
+_MAILGUN_FROM    = os.environ.get("MAILGUN_FROM", "")
+
+# ---------------------------------------------------------------------------
 # In-memory rate limiting (per-IP, resets on server restart)
 # ---------------------------------------------------------------------------
 _rate_lock = threading.Lock()
@@ -35,6 +46,9 @@ _reset_buckets: dict[str, list[float]] = defaultdict(list)
 _physician_login_buckets: dict[str, list[float]] = defaultdict(list)
 _physician_signup_buckets: dict[str, list[float]] = defaultdict(list)
 _username_login_buckets: dict[str, list[float]] = defaultdict(list)
+_share_code_buckets: dict[str, list[float]] = defaultdict(list)
+_username_check_buckets: dict[str, list[float]] = defaultdict(list)
+_ai_buckets: dict[str, list[float]] = defaultdict(list)
 
 _LOGIN_WINDOW = 300   # 5 minutes
 _LOGIN_MAX = 10       # attempts per window per IP
@@ -42,6 +56,12 @@ _RESET_WINDOW = 900   # 15 minutes
 _RESET_MAX = 5        # attempts per window per IP
 _USERNAME_LOCK_WINDOW = 300  # 5 minutes
 _USERNAME_LOCK_MAX = 5       # failed attempts per window per username
+_SHARE_CODE_WINDOW = 3600    # 1 hour
+_SHARE_CODE_MAX = 20         # lookups per window per IP
+_USERNAME_CHECK_WINDOW = 60  # 1 minute
+_USERNAME_CHECK_MAX = 30     # checks per window per IP
+_AI_WINDOW = 3600            # 1 hour
+_AI_MAX = 20                 # AI requests per window per IP
 
 
 def _check_rate_limit(bucket: dict, ip: str, window: int, max_attempts: int) -> bool:
@@ -69,6 +89,18 @@ def _is_physician_login_allowed(ip: str) -> bool:
 
 def _is_physician_signup_allowed(ip: str) -> bool:
     return _check_rate_limit(_physician_signup_buckets, ip, _RESET_WINDOW, _RESET_MAX)
+
+
+def _is_share_code_allowed(ip: str) -> bool:
+    return _check_rate_limit(_share_code_buckets, ip, _SHARE_CODE_WINDOW, _SHARE_CODE_MAX)
+
+
+def _is_username_check_allowed(ip: str) -> bool:
+    return _check_rate_limit(_username_check_buckets, ip, _USERNAME_CHECK_WINDOW, _USERNAME_CHECK_MAX)
+
+
+def _is_ai_allowed(ip: str) -> bool:
+    return _check_rate_limit(_ai_buckets, ip, _AI_WINDOW, _AI_MAX)
 
 
 def _is_username_login_allowed(username: str) -> bool:
@@ -332,35 +364,27 @@ def _send_reset_email(to_email: str, reset_url: str) -> bool:
     )
 
     # SMTP preferred path
-    smtp_host = os.environ.get("SMTP_HOST", "")
-    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
-    smtp_user = os.environ.get("SMTP_USER", "")
-    smtp_pass = os.environ.get("SMTP_PASSWORD", "")
-    smtp_from = os.environ.get("SMTP_FROM", smtp_user)
-    if smtp_host and smtp_user and smtp_pass:
+    if _SMTP_HOST and _SMTP_USER and _SMTP_PASS:
         msg = MIMEText(text_body)
         msg["Subject"] = subject
-        msg["From"] = smtp_from
+        msg["From"] = _SMTP_FROM
         msg["To"] = to_email
         try:
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as s:
+            with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=20) as s:
                 s.starttls()
-                s.login(smtp_user, smtp_pass)
-                s.sendmail(smtp_from, [to_email], msg.as_string())
+                s.login(_SMTP_USER, _SMTP_PASS)
+                s.sendmail(_SMTP_FROM, [to_email], msg.as_string())
             return True
         except Exception:
             logger.exception("SMTP password reset email send failed")
 
     # Mailgun API fallback
-    mailgun_api_key = os.environ.get("MAILGUN_API_KEY", "")
-    mailgun_domain = os.environ.get("MAILGUN_DOMAIN", "")
-    mailgun_from = os.environ.get("MAILGUN_FROM", "")
-    if mailgun_api_key and mailgun_domain:
-        sender = mailgun_from or f"no-reply@{mailgun_domain}"
+    if _MAILGUN_API_KEY and _MAILGUN_DOMAIN:
+        sender = _MAILGUN_FROM or f"no-reply@{_MAILGUN_DOMAIN}"
         try:
             resp = requests.post(
-                f"https://api.mailgun.net/v3/{mailgun_domain}/messages",
-                auth=("api", mailgun_api_key),
+                f"https://api.mailgun.net/v3/{_MAILGUN_DOMAIN}/messages",
+                auth=("api", _MAILGUN_API_KEY),
                 data={
                     "from": sender,
                     "to": [to_email],
@@ -394,34 +418,26 @@ def _send_verification_email(to_email: str, verify_url: str) -> bool:
         "If you did not create a Symptom Tracker account, you can ignore this email."
     )
 
-    smtp_host = os.environ.get("SMTP_HOST", "")
-    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
-    smtp_user = os.environ.get("SMTP_USER", "")
-    smtp_pass = os.environ.get("SMTP_PASSWORD", "")
-    smtp_from = os.environ.get("SMTP_FROM", smtp_user)
-    if smtp_host and smtp_user and smtp_pass:
+    if _SMTP_HOST and _SMTP_USER and _SMTP_PASS:
         msg = MIMEText(text_body)
         msg["Subject"] = subject
-        msg["From"] = smtp_from
+        msg["From"] = _SMTP_FROM
         msg["To"] = to_email
         try:
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as s:
+            with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=20) as s:
                 s.starttls()
-                s.login(smtp_user, smtp_pass)
-                s.sendmail(smtp_from, [to_email], msg.as_string())
+                s.login(_SMTP_USER, _SMTP_PASS)
+                s.sendmail(_SMTP_FROM, [to_email], msg.as_string())
             return True
         except Exception:
             logger.exception("SMTP verification email send failed")
 
-    mailgun_api_key = os.environ.get("MAILGUN_API_KEY", "")
-    mailgun_domain = os.environ.get("MAILGUN_DOMAIN", "")
-    mailgun_from = os.environ.get("MAILGUN_FROM", "")
-    if mailgun_api_key and mailgun_domain:
-        sender = mailgun_from or f"no-reply@{mailgun_domain}"
+    if _MAILGUN_API_KEY and _MAILGUN_DOMAIN:
+        sender = _MAILGUN_FROM or f"no-reply@{_MAILGUN_DOMAIN}"
         try:
             resp = requests.post(
-                f"https://api.mailgun.net/v3/{mailgun_domain}/messages",
-                auth=("api", mailgun_api_key),
+                f"https://api.mailgun.net/v3/{_MAILGUN_DOMAIN}/messages",
+                auth=("api", _MAILGUN_API_KEY),
                 data={
                     "from": sender,
                     "to": [to_email],
@@ -454,34 +470,26 @@ def _send_username_reminder_email(to_email: str, username: str) -> bool:
         "If you did not request this reminder, you can ignore this email."
     )
 
-    smtp_host = os.environ.get("SMTP_HOST", "")
-    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
-    smtp_user = os.environ.get("SMTP_USER", "")
-    smtp_pass = os.environ.get("SMTP_PASSWORD", "")
-    smtp_from = os.environ.get("SMTP_FROM", smtp_user)
-    if smtp_host and smtp_user and smtp_pass:
+    if _SMTP_HOST and _SMTP_USER and _SMTP_PASS:
         msg = MIMEText(text_body)
         msg["Subject"] = subject
-        msg["From"] = smtp_from
+        msg["From"] = _SMTP_FROM
         msg["To"] = to_email
         try:
-            with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as s:
+            with smtplib.SMTP(_SMTP_HOST, _SMTP_PORT, timeout=20) as s:
                 s.starttls()
-                s.login(smtp_user, smtp_pass)
-                s.sendmail(smtp_from, [to_email], msg.as_string())
+                s.login(_SMTP_USER, _SMTP_PASS)
+                s.sendmail(_SMTP_FROM, [to_email], msg.as_string())
             return True
         except Exception:
             logger.exception("SMTP username reminder email send failed")
 
-    mailgun_api_key = os.environ.get("MAILGUN_API_KEY", "")
-    mailgun_domain = os.environ.get("MAILGUN_DOMAIN", "")
-    mailgun_from = os.environ.get("MAILGUN_FROM", "")
-    if mailgun_api_key and mailgun_domain:
-        sender = mailgun_from or f"no-reply@{mailgun_domain}"
+    if _MAILGUN_API_KEY and _MAILGUN_DOMAIN:
+        sender = _MAILGUN_FROM or f"no-reply@{_MAILGUN_DOMAIN}"
         try:
             resp = requests.post(
-                f"https://api.mailgun.net/v3/{mailgun_domain}/messages",
-                auth=("api", mailgun_api_key),
+                f"https://api.mailgun.net/v3/{_MAILGUN_DOMAIN}/messages",
+                auth=("api", _MAILGUN_API_KEY),
                 data={
                     "from": sender,
                     "to": [to_email],

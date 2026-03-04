@@ -20,6 +20,7 @@ from security import (
     _is_login_allowed,
     _is_reset_allowed,
     _is_username_login_allowed,
+    _is_username_check_allowed,
     _record_login_failure,
     _clear_username_lockout,
     _audit_log,
@@ -33,25 +34,16 @@ router = APIRouter()
 
 
 @router.get("/api/check-username")
-def check_username(username: str = ""):
+def check_username(request: Request, username: str = ""):
+    ip = request.client.host if request.client else "unknown"
+    if not _is_username_check_allowed(ip):
+        return JSONResponse({"available": None})  # silently throttled — hide from scrapers
     username = username.strip()
     if not username or len(username) > 60:
         return JSONResponse({"available": False})
     with get_db() as conn:
         row = conn.execute(
             "SELECT id FROM user_profile WHERE username = ? COLLATE NOCASE", (username,)
-        ).fetchone()
-    return JSONResponse({"available": row is None})
-
-
-@router.get("/api/check-email")
-def check_email(email: str = ""):
-    email = normalize_email(email)
-    if not is_semantic_email(email):
-        return JSONResponse({"available": True})
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT id FROM user_profile WHERE LOWER(email) = ?", (email,)
         ).fetchone()
     return JSONResponse({"available": row is None})
 
@@ -79,7 +71,6 @@ def signup_get():
         <label for="email">Email</label>
         <input type="email" id="email" name="email"
           placeholder="you@example.com" required autocomplete="email">
-        <span id="email-hint" style="font-size:13px; margin-top:4px; display:block;"></span>
       </div>
       <div class="form-group">
         <label for="new_password">Password</label>
@@ -96,34 +87,32 @@ def signup_get():
   </div>
 <script>
 (function() {{
-  function debounceCheck(inputId, hintId, endpoint, paramName, takenMsg) {{
-    var timer = null;
-    var input = document.getElementById(inputId);
-    var hint = document.getElementById(hintId);
-    input.addEventListener('input', function() {{
-      clearTimeout(timer);
-      var val = input.value.trim();
-      if (!val) {{ hint.textContent = ''; return; }}
-      hint.style.color = '#9ca3af';
-      hint.textContent = 'Checking\u2026';
-      timer = setTimeout(function() {{
-        fetch(endpoint + '?' + paramName + '=' + encodeURIComponent(val))
-          .then(function(r) {{ return r.json(); }})
-          .then(function(d) {{
-            if (d.available) {{
-              hint.style.color = '#16a34a';
-              hint.textContent = '\u2713 Available';
-            }} else {{
-              hint.style.color = '#dc2626';
-              hint.textContent = takenMsg;
-            }}
-          }})
-          .catch(function() {{ hint.textContent = ''; }});
-      }}, 350);
-    }});
-  }}
-  debounceCheck('username', 'username-hint', '/api/check-username', 'username', '\u2717 Already taken');
-  debounceCheck('email', 'email-hint', '/api/check-email', 'email', '\u2717 Already associated with an account \u2014 try logging in');
+  var timer = null;
+  var input = document.getElementById('username');
+  var hint = document.getElementById('username-hint');
+  input.addEventListener('input', function() {{
+    clearTimeout(timer);
+    var val = input.value.trim();
+    if (!val) {{ hint.textContent = ''; return; }}
+    hint.style.color = '#9ca3af';
+    hint.textContent = 'Checking\u2026';
+    timer = setTimeout(function() {{
+      fetch('/api/check-username?username=' + encodeURIComponent(val))
+        .then(function(r) {{ return r.json(); }})
+        .then(function(d) {{
+          if (d.available === true) {{
+            hint.style.color = '#16a34a';
+            hint.textContent = '\u2713 Available';
+          }} else if (d.available === false) {{
+            hint.style.color = '#dc2626';
+            hint.textContent = '\u2717 Already taken';
+          }} else {{
+            hint.textContent = '';
+          }}
+        }})
+        .catch(function() {{ hint.textContent = ''; }});
+    }}, 350);
+  }});
 }})();
 </script>
 </body>
@@ -160,6 +149,11 @@ def signup_post(
     share_code = secrets.token_hex(4).upper()
     ip = request.client.host if request.client else "unknown"
     email_clean = normalize_email(email)
+    with get_db() as conn:
+        if conn.execute(
+            "SELECT 1 FROM user_profile WHERE LOWER(email) = ?", (email_clean,)
+        ).fetchone():
+            return JSONResponse({"ok": False, "error": "An account with that email already exists. Try logging in."}, status_code=400)
     try:
         with get_db() as conn:
             cursor = conn.execute(

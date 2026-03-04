@@ -6,6 +6,7 @@ from time import time
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from ai import generate_physician_digest, _ai_configured
 from config import PHYSICIAN_COOKIE_NAME, PHYSICIAN_CTX_COOKIE, RESET_TOKEN_TTL_SECONDS
 from db import get_db
 from security import (
@@ -19,6 +20,7 @@ from security import (
     _is_physician_login_allowed,
     _is_physician_signup_allowed,
     _is_reset_allowed,
+    _is_share_code_allowed,
     _send_reset_email,
     _send_username_reminder_email,
 )
@@ -67,6 +69,13 @@ _PHYSICIAN_STYLE = """
     .patient-info { flex: 1; }
     .patient-name { font-weight: 700; font-size: 16px; }
     .patient-meta { font-size: 13px; color: #666; margin-top: 2px; }
+    .btn-digest { background: none; border: 1px solid #a78bfa; border-radius: 6px;
+                  padding: 6px 12px; font-size: 13px; color: #7c3aed; cursor: pointer;
+                  font-family: inherit; white-space: nowrap; }
+    .btn-digest:hover { background: #f5f3ff; }
+    .digest-box { margin-top: 10px; padding: 10px 14px; background: #faf5ff;
+                  border: 1px solid #e9d5ff; border-radius: 6px; font-size: 13px;
+                  color: #374151; line-height: 1.5; }
   </style>
   <script>
     (function() {
@@ -121,6 +130,15 @@ _PHYSICIAN_STYLE = """
         if (!e.target.hasAttribute('data-ajax')) return;
         e.preventDefault();
         ajaxSubmit(e.target);
+      });
+      document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Enter') return;
+        var el = e.target;
+        if (el.tagName !== 'INPUT' || el.type === 'submit') return;
+        var form = el.closest('form[data-ajax]');
+        if (!form) return;
+        e.preventDefault();
+        form.requestSubmit();
       });
     })();
   </script>
@@ -511,11 +529,16 @@ def physician_dashboard(request: Request):
             (physician["id"],),
         ).fetchall()
 
+    ai_on = _ai_configured()
     patient_cards = ""
     for pt in patients:
         age = _calc_age(pt["dob"])
         age_str = f", {age}y" if age else ""
         cond_str = html.escape(pt["conditions"] or "—")
+        digest_btn = (
+            f'<button class="btn-digest" onclick="loadDigest({pt["id"]}, this)">'
+            f'&#129504; Digest</button>'
+        ) if ai_on else ""
         patient_cards += f"""
         <div class="card">
           <div class="patient-row">
@@ -523,6 +546,7 @@ def physician_dashboard(request: Request):
               <div class="patient-name">{html.escape(pt["name"] or "Unnamed patient")}</div>
               <div class="patient-meta">{cond_str}{age_str}</div>
             </div>
+            {digest_btn}
             <form method="post" action="/physician/switch/{pt['id']}" style="margin:0;" data-ajax>
               <button class="btn-view" type="submit">View &rarr;</button>
             </form>
@@ -532,6 +556,7 @@ def physician_dashboard(request: Request):
                 onclick="return confirm('Remove this patient from your list?')">Remove</button>
             </form>
           </div>
+          <div class="digest-box" id="digest-{pt['id']}" style="display:none;"></div>
         </div>"""
 
     if not patient_cards:
@@ -548,6 +573,22 @@ def physician_dashboard(request: Request):
       <button class="ph-btn-logout" type="submit">Log Out</button>
     </form>
   </div>
+  <script>
+    function loadDigest(patientId, btn) {{
+      var box = document.getElementById('digest-' + patientId);
+      if (box.style.display !== 'none') {{ box.style.display = 'none'; return; }}
+      box.style.display = 'block';
+      box.textContent = 'Generating\u2026';
+      btn.disabled = true;
+      fetch('/physician/patients/' + patientId + '/digest')
+        .then(function(r) {{ return r.json(); }})
+        .then(function(data) {{
+          box.textContent = data.ok ? data.digest : ('Error: ' + (data.error || 'Unknown error'));
+        }})
+        .catch(function() {{ box.textContent = 'Network error. Please try again.'; }})
+        .finally(function() {{ btn.disabled = false; }});
+    }}
+  </script>
   <div class="container">
     <h1>My Patients</h1>
     {patient_cards}
@@ -582,6 +623,9 @@ def physician_patients_add(request: Request, share_code: str = Form("")):
     physician = _get_authenticated_physician(request)
     if not physician:
         return RedirectResponse(url="/physician/login", status_code=303)
+    ip = request.client.host if request.client else "unknown"
+    if not _is_share_code_allowed(ip):
+        return JSONResponse({"ok": False, "error": "Too many attempts. Please wait before trying again."}, status_code=429)
     code = share_code.strip().upper()
     if not code:
         return JSONResponse({"ok": False, "error": "Share code is required"}, status_code=400)
@@ -646,3 +690,17 @@ def physician_exit():
     resp = JSONResponse({"ok": True, "redirect": "/physician"})
     resp.delete_cookie(PHYSICIAN_CTX_COOKIE)
     return resp
+
+
+@router.get("/physician/patients/{patient_id}/digest")
+def physician_patient_digest(request: Request, patient_id: int):
+    """Return a one-sentence AI digest for a patient (physician-only)."""
+    physician = _get_authenticated_physician(request)
+    if not physician:
+        return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    if not _physician_owns_patient(physician["id"], patient_id):
+        return JSONResponse({"ok": False, "error": "Forbidden"}, status_code=403)
+    digest = generate_physician_digest(patient_id)
+    if digest is None:
+        return JSONResponse({"ok": False, "error": "AI not configured or no data"}, status_code=503)
+    return JSONResponse({"ok": True, "digest": digest})

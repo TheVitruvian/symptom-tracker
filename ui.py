@@ -241,6 +241,7 @@ def _nav_bar(active: str = "") -> str:
         + dlnk("/symptoms/chart", "Health Report", "chart")
         + dlnk("/symptoms/calendar", "Calendar", "calendar")
         + dlnk("/medications/today", "Meds", "meds")
+        + dlnk("/insights", "Insights", "insights")
         + '</div>'
         '<div class="nav-desktop-actions">'
         '<a href="/symptoms/calendar?open_symptom_modal=1" style="background:#fff; color:#1e3a8a; text-decoration:none;'
@@ -265,6 +266,7 @@ def _nav_bar(active: str = "") -> str:
         + mlnk("/symptoms/chart", "Health Report", "chart")
         + mlnk("/symptoms/calendar", "Calendar", "calendar")
         + mlnk("/medications/today", "Meds", "meds")
+        + mlnk("/insights", "Insights", "insights")
         + mlnk("/profile", "Profile", "profile")
         + '<div style="display:flex; gap:8px; flex-wrap:wrap; padding:12px 0 4px;">'
         '<a href="/symptoms/calendar?open_symptom_modal=1" style="background:#fff; color:#1e3a8a; text-decoration:none;'
@@ -326,7 +328,7 @@ PAGE_STYLE = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="icon" type="image/png" href="/static/favicon.png">
-  <script defer src="/static/app.js?v=3"></script>
+  <script defer src="/static/app.js?v=4"></script>
   <style>
     body { font-family: system-ui, sans-serif; background: #f5f5f5; margin: 0; padding: 0; color: #222; }
     .container { max-width: 560px; margin: 0 auto; padding: 24px; }
