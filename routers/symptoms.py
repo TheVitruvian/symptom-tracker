@@ -76,7 +76,11 @@ def symptoms_list():
 
 
 @router.get("/symptoms/new", response_class=HTMLResponse)
-def symptoms_new():
+def symptoms_new(name: str = "", severity: int = 5, notes: str = ""):
+    import html as _html
+    name_val = _html.escape(name, quote=True)
+    notes_val = _html.escape(notes, quote=True)
+    severity_val = max(1, min(10, severity))
     return f"""<!DOCTYPE html>
 <html>
 <head>{PAGE_STYLE}</head>
@@ -91,7 +95,7 @@ def symptoms_new():
         <div class="form-group">
           <label for="name">Symptom name <span style="color:#ef4444">*</span></label>
           <input type="text" id="name" name="name" placeholder="e.g. Headache" required
-                 list="symptom-suggestions" autocomplete="off">
+                 value="{name_val}" list="symptom-suggestions" autocomplete="off">
           <datalist id="symptom-suggestions">
             <option value="Headache"><option value="Migraine"><option value="Nausea">
             <option value="Fatigue"><option value="Dizziness"><option value="Chest pain">
@@ -104,7 +108,7 @@ def symptoms_new():
         <div class="form-group">
           <label for="severity">Severity <span style="color:#ef4444">*</span></label>
           <div class="slider-row">
-            <input type="range" id="severity" name="severity" min="1" max="10" value="5"
+            <input type="range" id="severity" name="severity" min="1" max="10" value="{severity_val}"
                    oninput="updateSeverity(this.value)">
             <div class="sev-badge" id="sev-badge" style="background:#eab308">5</div>
           </div>
@@ -113,7 +117,7 @@ def symptoms_new():
 
         <div class="form-group">
           <label for="notes">Notes <span style="color:#aaa;font-weight:400">(optional)</span></label>
-          <textarea id="notes" name="notes" rows="3" placeholder="Any additional details..."></textarea>
+          <textarea id="notes" name="notes" rows="3" placeholder="Any additional details...">{notes_val}</textarea>
         </div>
 
         <div class="form-group">
@@ -145,7 +149,7 @@ def symptoms_new():
       badge.style.background = colors[+v];
       document.getElementById("severity").style.accentColor = colors[+v];
     }}
-    updateSeverity(5);
+    updateSeverity({severity_val});
     // Default the date picker to local "now" and cap max at now
     const now = new Date();
     const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);

@@ -149,7 +149,8 @@ def stream_weekly_summary(uid: int) -> Generator[str, None, None]:
     system = (
         "You are a compassionate health assistant helping a patient understand "
         "their recent symptom and medication data. Write in plain, encouraging language. "
-        "Be concise (3-5 short paragraphs). Do not give medical advice or diagnoses. "
+        "Be concise (3-5 short paragraphs). Do not use markdown, headers, or bullet points — "
+        "write plain prose only. Do not give medical advice or diagnoses. "
         "Highlight positive trends when present. Flag patterns that a doctor might want to know about."
     )
     prompt = (

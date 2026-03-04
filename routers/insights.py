@@ -211,17 +211,22 @@ def insights_page():
         cached_json = json.dumps(cached or "")
         ai_html = f"""
   <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
-    <h2 style="font-size:16px;font-weight:700;color:#111;margin:0 0 16px;display:flex;align-items:center;gap:8px;">
-      &#129504; AI Health Summary
-      <span style="font-size:12px;font-weight:400;color:#9ca3af;">refreshes every 24 hours</span>
-    </h2>
-    <div id="ai-summary-text" style="font-size:14px;line-height:1.7;color:#374151;white-space:pre-wrap;"></div>
-    <div id="ai-summary-loading" style="display:none;font-size:13px;color:#9ca3af;">Generating summary\u2026</div>
-    <button id="ai-refresh-btn" onclick="aiRefreshSummary()"
-      style="margin-top:12px;background:none;border:1px solid #d1d5db;border-radius:6px;
-             padding:5px 14px;font-size:13px;color:#6b7280;cursor:pointer;">
-      &#8635; Refresh
-    </button>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+      <h2 style="font-size:16px;font-weight:700;color:#111;margin:0;display:flex;align-items:center;gap:8px;">
+        &#129504; AI Health Summary
+        <span style="font-size:12px;font-weight:400;color:#9ca3af;">&#183; refreshes every 24h</span>
+      </h2>
+      <button id="ai-refresh-btn" onclick="aiRefreshSummary()"
+        style="background:none;border:1px solid #e5e7eb;border-radius:6px;
+               padding:5px 12px;font-size:12px;color:#6b7280;cursor:pointer;
+               display:flex;align-items:center;gap:4px;">
+        &#8635; Refresh
+      </button>
+    </div>
+    <div id="ai-summary-loading" style="display:none;padding:24px 0;text-align:center;">
+      <div style="font-size:13px;color:#9ca3af;letter-spacing:.03em;">Generating your summary\u2026</div>
+    </div>
+    <div id="ai-summary-text" style="font-size:15px;color:#1f2937;background:#faf5ff;border-radius:8px;padding:16px 18px;min-height:2em;"></div>
   </div>
 
   <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
@@ -270,14 +275,33 @@ def insights_page():
     var chatHistory = [];
 
     // ── AI Summary ──────────────────────────────────────────────────────────
+    function escHtml(s) {{
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }}
+    function formatSummary(text) {{
+      var paras = text.trim().split(/\\n\\n+/).filter(function(p) {{ return p.trim(); }});
+      return paras.map(function(p, i) {{
+        p = p.trim();
+        var mb = i < paras.length - 1 ? 'margin:0 0 14px;' : 'margin:0;';
+        if (p.startsWith('# '))
+          return '<p style="' + mb + 'font-weight:700;color:#111;line-height:1.5;">' + escHtml(p.slice(2)) + '</p>';
+        if (p.startsWith('## '))
+          return '<p style="' + mb + 'font-weight:600;color:#374151;line-height:1.5;">' + escHtml(p.slice(3)) + '</p>';
+        var html = escHtml(p).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\\n/g,'<br>');
+        return '<p style="' + mb + 'line-height:1.8;">' + html + '</p>';
+      }}).join('');
+    }}
     function showSummary(text) {{
-      document.getElementById('ai-summary-text').textContent = text;
+      var el = document.getElementById('ai-summary-text');
+      el.innerHTML = text ? formatSummary(text)
+        : '<p style="color:#9ca3af;margin:0;">No summary available.</p>';
       document.getElementById('ai-summary-loading').style.display = 'none';
       document.getElementById('ai-refresh-btn').style.display = '';
     }}
 
     function aiRefreshSummary() {{
-      document.getElementById('ai-summary-text').textContent = '';
+      var textEl = document.getElementById('ai-summary-text');
+      textEl.innerHTML = '';
       document.getElementById('ai-summary-loading').style.display = 'block';
       document.getElementById('ai-refresh-btn').style.display = 'none';
       var es = new EventSource('/insights/summary/stream');
@@ -288,7 +312,7 @@ def insights_page():
           var chunk = JSON.parse(e.data);
           if (chunk.error) {{ es.close(); showSummary('Error: ' + chunk.error); return; }}
           buf += chunk;
-          document.getElementById('ai-summary-text').textContent = buf;
+          textEl.textContent = buf;
         }} catch(ex) {{}}
       }};
       es.onerror = function() {{ es.close(); showSummary('Failed to load summary. Please try again.'); }};
@@ -322,50 +346,72 @@ def insights_page():
       return bubble;
     }}
 
+    function getCsrfToken() {{
+      var c = document.cookie.split('; ').find(function(x) {{ return x.startsWith('csrf_token='); }});
+      return c ? decodeURIComponent(c.split('=')[1]) : '';
+    }}
+
     window.sendChat = function() {{
       var input = document.getElementById('chat-input');
       var text = input.value.trim();
       if (!text) return;
       input.value = '';
+      input.disabled = true;
       chatHistory.push({{role: 'user', content: text}});
       appendChatMsg('user', text);
-      var bubble = appendChatMsg('assistant', '');
+      var bubble = appendChatMsg('assistant', '\u2026');
       var buf = '';
+      var done = false;
 
       fetch('/insights/chat/stream', {{
         method: 'POST',
-        headers: {{'Content-Type': 'application/json'}},
+        headers: {{'Content-Type': 'application/json', 'X-CSRF-Token': getCsrfToken()}},
         body: JSON.stringify({{messages: chatHistory}})
       }}).then(function(res) {{
         var reader = res.body.getReader();
         var decoder = new TextDecoder();
         var leftover = '';
         function pump() {{
+          if (done) return;
           reader.read().then(function(result) {{
             if (result.done) {{
-              chatHistory.push({{role: 'assistant', content: buf}});
+              if (!done) {{ chatHistory.push({{role: 'assistant', content: buf}}); done = true; }}
+              input.disabled = false; input.focus();
               return;
             }}
             leftover += decoder.decode(result.value, {{stream: true}});
             var parts = leftover.split('\\n\\n');
             leftover = parts.pop();
             parts.forEach(function(part) {{
+              if (done) return;
               if (!part.startsWith('data: ')) return;
               var payload = part.slice(6);
-              if (payload === '[DONE]') return;
+              if (payload === '[DONE]') {{
+                done = true;
+                chatHistory.push({{role: 'assistant', content: buf}});
+                input.disabled = false; input.focus();
+                return;
+              }}
               try {{
                 var chunk = JSON.parse(payload);
-                if (!chunk.error) {{ buf += chunk; bubble.textContent = buf; }}
+                if (chunk.error) {{
+                  bubble.textContent = 'Error: ' + chunk.error;
+                  done = true; input.disabled = false;
+                }} else {{
+                  buf += chunk;
+                  bubble.textContent = buf;
+                }}
               }} catch(ex) {{}}
             }});
             var box = document.getElementById('chat-messages');
             box.scrollTop = box.scrollHeight;
-            pump();
+            if (!done) pump();
           }});
         }}
         pump();
       }}).catch(function() {{
         bubble.textContent = 'Network error. Please try again.';
+        input.disabled = false;
       }});
     }};
 
@@ -394,7 +440,7 @@ def insights_page():
         resEl.innerHTML = '<strong>' + data.name + '</strong>'
           + ' &mdash; severity <strong>' + data.severity + '/10</strong>'
           + (data.notes ? ' &mdash; <em>' + data.notes + '</em>' : '')
-          + '<br><a href="/symptoms/add?name=' + encodeURIComponent(data.name)
+          + '<br><a href="/symptoms/new?name=' + encodeURIComponent(data.name)
           + '&severity=' + data.severity
           + '&notes=' + encodeURIComponent(data.notes || '')
           + '" style="font-size:13px;color:#059669;font-weight:600;">'
