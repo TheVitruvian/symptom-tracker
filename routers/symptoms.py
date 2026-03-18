@@ -89,7 +89,7 @@ def symptoms_new(name: str = "", severity: int = 5, notes: str = ""):
   <div class="container">
     <h1>Log a Symptom</h1>
     <div class="card">
-      <form method="post" action="/symptoms" data-ajax>
+      <form method="post" action="/symptoms" data-ajax autocomplete="off">
         <div class="form-error" style="display:none"></div>
 
         <div class="form-group">
@@ -130,7 +130,7 @@ def symptoms_new(name: str = "", severity: int = 5, notes: str = ""):
           <label for="end_date">End date &amp; time
             <span style="color:#aaa;font-weight:400">(optional — leave blank for a single moment)</span>
           </label>
-          <input type="datetime-local" id="end_date" name="end_date" style="width:auto;">
+          <input type="datetime-local" id="end_date" name="end_date" style="width:auto;" autocomplete="off">
         </div>
 
         <button class="btn-primary" type="submit">Save Symptom</button>
@@ -158,7 +158,8 @@ def symptoms_new(name: str = "", severity: int = 5, notes: str = ""):
     const endEl   = document.getElementById("end_date");
     startEl.value = localStr;
     startEl.max   = localStr;
-    endEl.max     = localStr;
+    endEl.value   = "";
+    setTimeout(function() {{ endEl.value = ""; }}, 100);
     startEl.addEventListener("change", () => {{
       endEl.min = startEl.value;
       if (endEl.value && endEl.value <= startEl.value) endEl.value = "";

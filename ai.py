@@ -8,7 +8,7 @@ them unconditionally and just hide the UI when _ai_configured() is False.
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Generator, Optional
 
 import anthropic
@@ -53,20 +53,17 @@ def _build_health_context(uid: int, days: int = 30) -> str:
 
         # Active medication schedules
         med_rows = conn.execute(
-            "SELECT name, dose, frequency FROM medication_schedules"
+            "SELECT id, name, dose, frequency, start_date FROM medication_schedules"
             " WHERE user_id = ? AND active = 1 AND paused = 0",
             (uid,),
         ).fetchall()
 
-        # Adherence summary for each active schedule
-        dose_stats = conn.execute(
-            """SELECT ms.name,
-                      COUNT(*) AS total,
-                      SUM(CASE WHEN md.status = 'taken' THEN 1 ELSE 0 END) AS taken
-               FROM medication_doses md
-               JOIN medication_schedules ms ON ms.id = md.schedule_id
-               WHERE md.user_id = ? AND md.scheduled_date >= DATE('now', ?)
-               GROUP BY ms.id""",
+        # Taken dose counts per schedule in the period
+        taken_stats = conn.execute(
+            """SELECT schedule_id, COUNT(*) AS taken
+               FROM medication_doses
+               WHERE user_id = ? AND status = 'taken' AND scheduled_date >= DATE('now', ?)
+               GROUP BY schedule_id""",
             (uid, f"-{days} days"),
         ).fetchall()
 
@@ -77,12 +74,25 @@ def _build_health_context(uid: int, days: int = 30) -> str:
 
     if med_rows:
         lines.append("\nCurrent medications:")
-        adherence_map = {r["name"]: r for r in dose_stats}
+        dpd_map = {"once_daily": 1, "twice_daily": 2, "three_daily": 3}
+        taken_map = {r["schedule_id"]: r["taken"] for r in taken_stats}
+        today = datetime.now(timezone.utc).date()
+        period_start = (datetime.now(timezone.utc) - timedelta(days=days)).date()
         for m in med_rows:
-            stat = adherence_map.get(m["name"])
-            if stat and stat["total"] > 0:
-                pct = round(stat["taken"] / stat["total"] * 100)
-                lines.append(f"  - {m['name']} {m['dose']} ({m['frequency']}): {pct}% adherence")
+            dpd = dpd_map.get(m["frequency"], 0)
+            if dpd == 0:
+                # PRN — just show taken count
+                taken = taken_map.get(m["id"], 0)
+                lines.append(f"  - {m['name']} {m['dose']} (as needed): taken {taken}x in period")
+                continue
+            sched_start = date.fromisoformat(m["start_date"])
+            effective_start = max(sched_start, period_start)
+            active_days = (today - effective_start).days + 1
+            expected = dpd * max(active_days, 0)
+            taken = taken_map.get(m["id"], 0)
+            if expected > 0:
+                pct = round(taken / expected * 100)
+                lines.append(f"  - {m['name']} {m['dose']} ({m['frequency']}): {pct}% adherence ({taken}/{expected} doses)")
             else:
                 lines.append(f"  - {m['name']} {m['dose']} ({m['frequency']})")
 
