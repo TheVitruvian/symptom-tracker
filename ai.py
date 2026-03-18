@@ -22,7 +22,7 @@ from db import get_db
 
 _OPUS   = "claude-opus-4-6"
 _HAIKU  = "claude-haiku-4-5"
-_SUMMARY_TTL_HOURS = 24
+_SUMMARY_TTL_HOURS = 24  # Cache duration for AI-generated summaries
 
 
 def _ai_configured() -> bool:
