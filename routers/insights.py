@@ -16,10 +16,13 @@ router = APIRouter()
 
 def _sev_chip(val: float) -> str:
     c = _severity_color(val)
+    # Use darker text for yellow to ensure contrast
+    text_color = "#854d0e" if c == "#eab308" else c
     return (
-        f'<span style="display:inline-block;background:{c}22;color:{c};'
+        f'<span style="display:inline-block;background:{c}22;color:{text_color};'
         f'border:1px solid {c}66;border-radius:12px;padding:1px 10px;'
-        f'font-size:13px;font-weight:700;min-width:34px;text-align:center;">'
+        f'font-size:13px;font-weight:700;min-width:34px;text-align:center;"'
+        f' aria-label="severity {val} out of 10">'
         f'{val}</span>'
     )
 
@@ -466,7 +469,7 @@ def insights_page():
         'display:flex;align-items:center;gap:8px;"'
     )
     body = f"""
-<div style="max-width:820px;margin:32px auto;padding:0 16px 48px;">
+<div class="container" style="max-width:820px;padding-top:32px;padding-bottom:48px;">
   <h1 style="font-size:22px;font-weight:800;color:#111;margin:0 0 24px;">Insights</h1>
   {ai_html}
   <div {card}>

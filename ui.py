@@ -116,7 +116,9 @@ def _sidebar() -> str:
     inp = 'style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit;"'
     ta  = 'style="width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:6px;padding:6px 8px;font-size:13px;font-family:inherit;resize:vertical;"'
     divider = '<hr style="border:none;border-top:1px solid #f3f4f6;margin:14px 0;">'
-    return f"""<aside class="sidebar">
+    return f"""<div id="sidebar-backdrop"></div>
+<button id="sb-mobile-toggle" class="sidebar-toggle" aria-label="View profile">&#128100; Profile</button>
+<aside class="sidebar">
   <div style="text-align:center;padding-bottom:16px;border-bottom:2px solid #f3f4f6;margin-bottom:16px;">
     {avatar}
     <p id="sb-name-v" style="font-weight:700;font-size:16px;margin:10px 0 3px;color:#111;">{name_esc or '<em style="color:#aaa;font-style:normal;font-size:14px;">Add your name</em>'}</p>
@@ -154,6 +156,13 @@ document.body.classList.add('has-sidebar');
   var nav = document.querySelector('nav');
   var sb  = document.querySelector('.sidebar');
   if (nav && sb) sb.style.top = nav.getBoundingClientRect().bottom + 'px';
+  // Mobile sidebar toggle
+  function sbOpen(){{sb.classList.add('sb-open');document.getElementById('sidebar-backdrop').style.display='block';}}
+  function sbClose(){{sb.classList.remove('sb-open');document.getElementById('sidebar-backdrop').style.display='none';}}
+  var toggleBtn = document.getElementById('sb-mobile-toggle');
+  var backdrop = document.getElementById('sidebar-backdrop');
+  if(toggleBtn) toggleBtn.addEventListener('click', function(){{ sb.classList.contains('sb-open') ? sbClose() : sbOpen(); }});
+  if(backdrop) backdrop.addEventListener('click', sbClose);
 }})();
 function sbToggle(e){{document.getElementById('sb-view').style.display=e?'none':'';document.getElementById('sb-edit').style.display=e?'':'none';}}
 function sbCookie(name){{
@@ -231,7 +240,7 @@ def _nav_bar(active: str = "") -> str:
         )
     return (
         physician_banner
-        + '<nav style="background:#1e3a8a;">'
+        + '<nav style="background:#1e3a8a;position:relative;">'
         # ── Desktop row ───────────────────────────────────────────────────
         '<div style="padding:0 24px; height:52px; display:flex; align-items:center; gap:20px;">'
         '<a href="/symptoms/chart" style="display:inline-flex;align-items:center;flex-shrink:0;margin-right:8px;">'
@@ -381,8 +390,10 @@ PAGE_STYLE = """
                      font-size: 22px; cursor: pointer; padding: 4px 8px; line-height: 1;
                      margin-left: auto; }
     #nav-menu { display: none; flex-direction: column;
+                position: absolute; left: 0; right: 0; top: 52px;
                 padding: 4px 24px 16px; background: #1e3a8a;
-                border-top: 1px solid rgba(255,255,255,0.15); }
+                border-top: 1px solid rgba(255,255,255,0.15);
+                box-shadow: 0 4px 12px rgba(0,0,0,.25); z-index: 200; }
     #nav-menu.open { display: flex; }
     @media (max-width: 640px) {
       .nav-desktop-links  { display: none; }
@@ -397,9 +408,17 @@ PAGE_STYLE = """
       overflow-y: auto; padding: 20px 16px; box-sizing: border-box; z-index: 5;
     }
     body.has-sidebar .container { margin-left: 324px; margin-right: 24px; }
+    .sidebar-toggle { display: none; }
+    #sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 49; }
     @media (max-width: 900px) {
-      .sidebar { display: none; }
+      .sidebar { display: none; z-index: 50; transition: transform .25s; transform: translateX(-100%); }
+      .sidebar.sb-open { display: block; transform: translateX(0); }
       body.has-sidebar .container { margin-left: auto; margin-right: auto; }
+      .sidebar-toggle { display: flex; align-items: center; gap: 6px; position: fixed;
+        bottom: 20px; right: 20px; z-index: 48; background: #1e3a8a; color: #fff;
+        border: none; border-radius: 50px; padding: 10px 16px; font-size: 13px;
+        font-weight: 600; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.25);
+        font-family: inherit; }
     }
     /* ── Toast notifications ─────────────────────────────────────────── */
     .toast {

@@ -2128,9 +2128,12 @@ def symptoms_calendar():
             let inner = `<span class="day-num">${dayCount}</span>`;
             const hasEntries = !!entries;
             const hasMedEntries = !!medEntries;
+            td.style.background = "";
             if (entries) {
               const maxSev = Math.max(...entries.map(e => e.severity));
               const color = sevColor(maxSev);
+              const alpha = Math.round((0.08 + (maxSev / 10) * 0.22) * 255).toString(16).padStart(2, "0");
+              td.style.background = color + alpha;
               inner += `<span class="dot" style="background:${color}"></span>`;
               if (entries.length > 1) {
                 inner += `<span class="count">×${entries.length}</span>`;

@@ -64,6 +64,9 @@ def _adherence_badge(adh: dict) -> str:
     if adh["expected"] == 0:
         return '<span style="font-size:12px;color:#9ca3af;">No data yet</span>'
     pct = adh["pct"] if adh["pct"] is not None else 0.0
+    taken = adh["taken"]
+    if taken == 0:
+        return '<span style="font-size:12px;color:#6b7280;background:#f3f4f6;border-radius:10px;padding:2px 8px;font-weight:600;">No doses recorded yet</span>'
     if pct >= 80:
         bg, fg = "#dcfce7", "#15803d"
     elif pct >= 50:

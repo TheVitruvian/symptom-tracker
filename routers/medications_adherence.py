@@ -415,8 +415,8 @@ def medications_today(d: str = "", w_end: str = ""):
     .today-shell {{ width:min(1320px, calc(100vw - 380px)); }}
     .today-header {{ display:flex; align-items:flex-end; justify-content:flex-start; gap:10px; flex-wrap:wrap; margin-bottom:14px; }}
     .today-label {{ margin:0; font-size:14px; color:#6b7280; font-weight:600; }}
-    .today-jump-link {{ text-decoration:none; color:#6d28d9; font-size:12px; font-weight:700; white-space:nowrap; }}
-    .today-jump-link:hover {{ text-decoration:underline; color:#5b21b6; }}
+    .today-jump-link {{ text-decoration:none; background:#7c3aed; color:#fff; font-size:12px; font-weight:700; white-space:nowrap; border-radius:20px; padding:5px 12px; }}
+    .today-jump-link:hover {{ background:#6d28d9; }}
     .day-tabs-row {{ display:flex; align-items:center; gap:10px; margin-bottom:16px; }}
     .week-nav-btn {{ text-decoration:none; border:1px solid #d1d5db; color:#374151; background:#fff; border-radius:10px; padding:8px 10px; font-size:12px; font-weight:700; white-space:nowrap; }}
     .week-nav-btn:hover {{ background:#f9fafb; }}
@@ -470,6 +470,8 @@ def medications_today(d: str = "", w_end: str = ""):
     .dose-more summary {{ cursor:pointer; font-size:11px; color:#6b7280; user-select:none; }}
     .dose-more-actions {{ margin-top:6px; display:flex; flex-direction:column; gap:6px; }}
     .dose-time-form {{ display:flex; flex-direction:column; gap:6px; margin:0; }}
+    .time-quick-row {{ display:flex; gap:4px; flex-wrap:wrap; width:100%; }}
+    .time-quick-row .dose-btn {{ flex:1; min-width:0; font-size:10px; padding:5px 4px; }}
     .dose-time-input {{ border:1px solid #d1d5db; border-radius:7px; padding:6px 8px; font-size:12px; font-family:inherit; min-height:30px; width:100%; box-sizing:border-box; }}
     @media (max-width: 1080px) {{
       .sections-grid {{ grid-template-columns:1fr; }}
@@ -483,6 +485,11 @@ def medications_today(d: str = "", w_end: str = ""):
       .day-select-mobile {{ display:block; flex:1; min-width:0; }}
       .med-row {{ flex-direction:column; }}
       .dose-actions {{ width:100%; min-width:0; }}
+    }}
+    @media (max-width: 480px) {{
+      .kpi-label {{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }}
+      .primary-actions-row {{ flex-direction:column; }}
+      .primary-actions-row form {{ width:100%; }}
     }}
   </style>
 </head>
@@ -637,10 +644,20 @@ def medications_today(d: str = "", w_end: str = ""):
                 <button type="button" class="dose-btn dose-btn-warn" data-dose-action="miss"
                   data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Mark missed</button>
               </div>
-              <div class="primary-actions-row">
+              <div class="time-quick-row">
+                <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-quick" data-offset="0"
+                  data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Just now</button>
+                <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-quick" data-offset="-5"
+                  data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">5m ago</button>
+                <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-quick" data-offset="-15"
+                  data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">15m ago</button>
+                <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="show-custom-time"
+                  data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}">Custom&hellip;</button>
+              </div>
+              <div id="dose-custom-${{r.schedule_id}}-${{r.dose_num}}" style="display:none;flex-direction:column;gap:4px;">
                 <input type="time" class="dose-time dose-time-input" id="dose-time-${{r.schedule_id}}-${{r.dose_num}}" data-date="${{dayStr}}">
                 <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-time"
-                  data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Take with time</button>
+                  data-schedule-id="${{r.schedule_id}}" data-dose-num="${{r.dose_num}}" data-date="${{dayStr}}">Save time</button>
               </div>
             </div>
           </article>`;
@@ -669,10 +686,20 @@ def medications_today(d: str = "", w_end: str = ""):
               <details class="dose-more">
                 <summary>More actions</summary>
                 <div class="dose-more-actions">
-                  <div class="dose-time-form">
+                  <div class="time-quick-row">
+                    <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-quick-prn" data-offset="0"
+                      data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{nextDoseNum}}">Just now</button>
+                    <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-quick-prn" data-offset="-5"
+                      data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{nextDoseNum}}">5m ago</button>
+                    <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-quick-prn" data-offset="-15"
+                      data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{nextDoseNum}}">15m ago</button>
+                    <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="show-custom-prn"
+                      data-schedule-id="${{r.schedule_id}}">Custom&hellip;</button>
+                  </div>
+                  <div id="prn-custom-${{r.schedule_id}}" style="display:none;flex-direction:column;gap:4px;">
                     <input type="time" class="dose-time dose-time-input" id="prn-time-${{r.schedule_id}}" data-date="${{dayStr}}">
                     <button type="button" class="dose-btn dose-btn-secondary" data-dose-action="take-time-prn"
-                      data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{nextDoseNum}}">Log with time</button>
+                      data-schedule-id="${{r.schedule_id}}" data-date="${{dayStr}}" data-next-dose="${{nextDoseNum}}">Save time</button>
                   </div>
                   ${{entries.length ? `
                   <div class="dose-time-form">
@@ -790,7 +817,32 @@ def medications_today(d: str = "", w_end: str = ""):
         const doseNum = Number(btn.getAttribute("data-dose-num") || "0");
         const dateStr = btn.getAttribute("data-date") || selectedDayFromUrl();
         try {{
-          if (action === "take-now") {{
+          if (action === "take-quick") {{
+            const offsetMins = Number(btn.getAttribute("data-offset") || "0");
+            const qn = new Date(); qn.setMinutes(qn.getMinutes() + offsetMins);
+            const qt = String(qn.getHours()).padStart(2,"0") + ":" + String(qn.getMinutes()).padStart(2,"0");
+            await apiDoseAction("/api/medications/doses/take", {{
+              schedule_id: scheduleId, dose_num: doseNum, scheduled_date: dateStr, taken_time: qt,
+            }});
+            if (window._showToast) window._showToast("Dose saved", "success");
+          }} else if (action === "take-quick-prn") {{
+            const nextDose = Number(btn.getAttribute("data-next-dose") || "0");
+            const offsetMins = Number(btn.getAttribute("data-offset") || "0");
+            const qn = new Date(); qn.setMinutes(qn.getMinutes() + offsetMins);
+            const qt = String(qn.getHours()).padStart(2,"0") + ":" + String(qn.getMinutes()).padStart(2,"0");
+            await apiDoseAction("/api/medications/doses/take", {{
+              schedule_id: scheduleId, dose_num: nextDose, scheduled_date: dateStr, taken_time: qt,
+            }});
+            if (window._showToast) window._showToast("Dose saved", "success");
+          }} else if (action === "show-custom-time") {{
+            const row = document.getElementById(`dose-custom-${{scheduleId}}-${{doseNum}}`);
+            if (row) {{ row.style.display = "flex"; row.style.flexDirection = "column"; row.style.gap = "4px"; }}
+            return;
+          }} else if (action === "show-custom-prn") {{
+            const row = document.getElementById(`prn-custom-${{scheduleId}}`);
+            if (row) {{ row.style.display = "flex"; row.style.flexDirection = "column"; row.style.gap = "4px"; }}
+            return;
+          }} else if (action === "take-now") {{
             await apiDoseAction("/api/medications/doses/take", {{
               schedule_id: scheduleId, dose_num: doseNum, scheduled_date: dateStr, taken_time: "",
             }});
@@ -961,6 +1013,11 @@ def schedules_list():
           </form>
         </div>
       </section>
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:10px;">
+        <span style="font-size:12px;color:#6b7280;">View:</span>
+        <button id="sched-view-card" type="button" class="btn-edit" style="font-size:12px;padding:4px 10px;background:#7c3aed;color:#fff;border-color:#7c3aed;">Cards</button>
+        <button id="sched-view-list" type="button" class="btn-edit" style="font-size:12px;padding:4px 10px;">List</button>
+      </div>
       <div id="sched-list" class="sched-grid"></div>
       <p id="sched-empty" class="sched-empty" style="display:none;">No active schedules. Add one to start tracking adherence.</p>
     </div>
@@ -1009,6 +1066,7 @@ def schedules_list():
       function badgeClass(adh) {{
         if (adh.expected === null) return "sched-badge sched-badge-prn";
         if (adh.expected === 0 || adh.pct === null) return "sched-badge sched-badge-mid";
+        if ((adh.taken || 0) === 0) return "sched-badge sched-badge-paused";
         if (adh.pct >= 80) return "sched-badge sched-badge-good";
         if (adh.pct >= 50) return "sched-badge sched-badge-mid";
         return "sched-badge sched-badge-low";
@@ -1020,40 +1078,88 @@ def schedules_list():
           return `${{n}} ${{n === 1 ? "dose" : "doses"}} this week`;
         }}
         if (adh.expected === 0 || adh.pct === null) return "No data yet";
+        if ((adh.taken || 0) === 0) return "No doses recorded yet";
         return `${{adh.pct}}% adherence (7d)`;
       }}
 
+      let schedViewMode = "card";
+      let lastSchedules = [];
+
       function renderSchedules(items) {{
+        lastSchedules = items;
         listEl.innerHTML = "";
         if (!items.length) {{
           emptyEl.style.display = "";
           return;
         }}
         emptyEl.style.display = "none";
-        for (const s of items) {{
-          const card = document.createElement("article");
-          card.className = s.paused ? "sched-card sched-card-paused" : "sched-card";
-          const doseHtml = s.dose ? `<div class="sched-dose">${{escapeHtml(s.dose)}}</div>` : "";
-          const adherenceBadge = s.paused
-            ? `<span class="sched-badge sched-badge-paused">Paused</span>`
-            : `<span class="${{badgeClass(s.adherence)}}">${{badgeText(s.adherence)}}</span>`;
-          const pauseBtn = s.paused
-            ? `<button type="button" class="btn-edit" data-action="resume" data-id="${{s.id}}">Resume</button>`
-            : `<button type="button" class="btn-edit" data-action="pause" data-id="${{s.id}}">Pause</button>`;
-          card.innerHTML = `
-            <div class="sched-name">${{escapeHtml(s.name)}}</div>
-            ${{doseHtml}}
-            <div class="sched-meta">${{escapeHtml(s.frequency_label)}}</div>
-            ${{adherenceBadge}}
-            <div class="sched-actions">
-              <button type="button" class="btn-edit" data-action="edit" data-id="${{s.id}}">Edit</button>
-              ${{pauseBtn}}
-              <button type="button" class="btn-delete" data-action="delete" data-id="${{s.id}}">Delete</button>
-            </div>
-          `;
-          listEl.appendChild(card);
+        if (schedViewMode === "list") {{
+          listEl.className = "";
+          listEl.style.cssText = "border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;background:#fff;";
+          items.forEach((s, i) => {{
+            const adherenceBadge = s.paused
+              ? `<span class="sched-badge sched-badge-paused" style="font-size:11px;">Paused</span>`
+              : `<span class="${{badgeClass(s.adherence)}}" style="font-size:11px;">${{badgeText(s.adherence)}}</span>`;
+            const pauseBtn = s.paused
+              ? `<button type="button" class="btn-edit" data-action="resume" data-id="${{s.id}}" style="font-size:11px;padding:3px 8px;">Resume</button>`
+              : `<button type="button" class="btn-edit" data-action="pause" data-id="${{s.id}}" style="font-size:11px;padding:3px 8px;">Pause</button>`;
+            const row = document.createElement("div");
+            row.style.cssText = `display:flex;align-items:center;gap:10px;padding:10px 14px;flex-wrap:wrap;${{i > 0 ? "border-top:1px solid #f3f4f6;" : ""}}${{s.paused ? "background:#f9fafb;opacity:.85;" : ""}}`;
+            row.innerHTML = `
+              <div style="flex:1;min-width:0;">
+                <span style="font-size:14px;font-weight:700;color:#111827;">${{escapeHtml(s.name)}}</span>
+                ${{s.dose ? `<span style="font-size:12px;color:#7c3aed;margin-left:6px;font-weight:700;">${{escapeHtml(s.dose)}}</span>` : ""}}
+                <span style="font-size:12px;color:#6b7280;margin-left:8px;">${{escapeHtml(s.frequency_label)}}</span>
+              </div>
+              <div style="flex-shrink:0;">${{adherenceBadge}}</div>
+              <div style="display:flex;gap:6px;flex-shrink:0;">
+                <button type="button" class="btn-edit" data-action="edit" data-id="${{s.id}}" style="font-size:11px;padding:3px 8px;">Edit</button>
+                ${{pauseBtn}}
+                <button type="button" class="btn-delete" data-action="delete" data-id="${{s.id}}" style="font-size:11px;padding:3px 8px;">Delete</button>
+              </div>`;
+            listEl.appendChild(row);
+          }});
+        }} else {{
+          listEl.className = "sched-grid";
+          listEl.style.cssText = "";
+          for (const s of items) {{
+            const card = document.createElement("article");
+            card.className = s.paused ? "sched-card sched-card-paused" : "sched-card";
+            const doseHtml = s.dose ? `<div class="sched-dose">${{escapeHtml(s.dose)}}</div>` : "";
+            const adherenceBadge = s.paused
+              ? `<span class="sched-badge sched-badge-paused">Paused</span>`
+              : `<span class="${{badgeClass(s.adherence)}}">${{badgeText(s.adherence)}}</span>`;
+            const pauseBtn = s.paused
+              ? `<button type="button" class="btn-edit" data-action="resume" data-id="${{s.id}}">Resume</button>`
+              : `<button type="button" class="btn-edit" data-action="pause" data-id="${{s.id}}">Pause</button>`;
+            card.innerHTML = `
+              <div class="sched-name">${{escapeHtml(s.name)}}</div>
+              ${{doseHtml}}
+              <div class="sched-meta">${{escapeHtml(s.frequency_label)}}</div>
+              ${{adherenceBadge}}
+              <div class="sched-actions">
+                <button type="button" class="btn-edit" data-action="edit" data-id="${{s.id}}">Edit</button>
+                ${{pauseBtn}}
+                <button type="button" class="btn-delete" data-action="delete" data-id="${{s.id}}">Delete</button>
+              </div>
+            `;
+            listEl.appendChild(card);
+          }}
         }}
       }}
+
+      document.getElementById("sched-view-card").addEventListener("click", () => {{
+        schedViewMode = "card";
+        document.getElementById("sched-view-card").style.cssText = "font-size:12px;padding:4px 10px;background:#7c3aed;color:#fff;border-color:#7c3aed;";
+        document.getElementById("sched-view-list").style.cssText = "font-size:12px;padding:4px 10px;";
+        renderSchedules(lastSchedules);
+      }});
+      document.getElementById("sched-view-list").addEventListener("click", () => {{
+        schedViewMode = "list";
+        document.getElementById("sched-view-list").style.cssText = "font-size:12px;padding:4px 10px;background:#7c3aed;color:#fff;border-color:#7c3aed;";
+        document.getElementById("sched-view-card").style.cssText = "font-size:12px;padding:4px 10px;";
+        renderSchedules(lastSchedules);
+      }});
 
       async function loadSchedules() {{
         const res = await fetch("/api/medications/schedules", {{ cache: "no-store" }});

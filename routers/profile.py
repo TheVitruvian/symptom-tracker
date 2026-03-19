@@ -189,12 +189,20 @@ def _physician_access_card(share_code: str, linked_physicians, access_log) -> st
     return f"""
     <div style="margin-top:24px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:14px 18px;">
       <p style="font-size:13px; color:#0c4a6e; margin:0 0 4px; font-weight:600;">Physician Access</p>
-      <p style="font-size:13px; color:#0369a1; margin:0 0 10px;">
+      <p style="font-size:13px; color:#0369a1; margin:0 0 6px;">
         Share this code with your physician to give them access to your data.
         Regenerate it at any time to invalidate the old code.
       </p>
-      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
-        <code style="font-size:20px; font-weight:700; letter-spacing:3px; color:#1e3a8a;">{html.escape(share_code)}</code>
+      <p style="font-size:12px; color:#6b7280; margin:0 0 10px;">
+        Your physician will see your symptoms, medications, and health reports for the past 90 days.
+      </p>
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+        <code id="profile-share-code" style="font-size:20px; font-weight:700; letter-spacing:3px; color:#1e3a8a;">{html.escape(share_code)}</code>
+        <button type="button" onclick="copyProfileShareCode(this)"
+          style="background:#0369a1; color:#fff; border:none; border-radius:6px;
+                 font-size:12px; padding:5px 12px; cursor:pointer; font-family:inherit;">
+          Copy
+        </button>
         <form method="post" action="/profile/share-code/regenerate" style="margin:0;" data-ajax>
           <button type="submit"
             style="background:none; border:1px solid #0369a1; border-radius:6px; color:#0369a1;
@@ -204,6 +212,15 @@ def _physician_access_card(share_code: str, linked_physicians, access_log) -> st
           </button>
         </form>
       </div>
+      <script>
+      function copyProfileShareCode(btn) {{
+        var code = document.getElementById('profile-share-code').textContent.trim();
+        navigator.clipboard.writeText(code).then(function() {{
+          var orig = btn.textContent; btn.textContent = 'Copied!';
+          setTimeout(function() {{ btn.textContent = orig; }}, 2000);
+        }});
+      }}
+      </script>
       {physician_list}
       {log_section}
     </div>"""
