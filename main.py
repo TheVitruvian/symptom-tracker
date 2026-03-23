@@ -4,8 +4,10 @@ load_dotenv()  # Load .env before anything else
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from config import (
+    ALLOWED_HOSTS,
     PUBLIC_PATHS,
     PHYSICIAN_CTX_COOKIE,
     _current_user_id,
@@ -21,7 +23,6 @@ from security import (
     _has_any_patient,
     _ensure_csrf_cookie,
     _csrf_header_valid,
-    _csrf_query_valid,
     _csrf_form_valid,
     _is_same_origin,
 )
@@ -38,6 +39,7 @@ for _ext in ["jpg", "png", "gif", "webp"]:
         _old_photo.rename(_new_photo)
 
 app = FastAPI()
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -86,10 +88,9 @@ async def auth_middleware(request: Request, call_next):
                 return JSONResponse({"error": "forbidden"}, status_code=403)
         elif path not in PUBLIC_PATHS and not path.startswith("/physician"):
             # Require CSRF token for authenticated patient form POSTs.
-            # Regular forms send token as a hidden field (body); multipart forms
-            # (file uploads) send it as a query param; AJAX requests send it as
+            # HTML forms submit the token in the body; AJAX requests send it as
             # the X-CSRF-Token header. Excludes public routes and physician routes.
-            if not _csrf_query_valid(request) and not _csrf_header_valid(request) and not await _csrf_form_valid(request):
+            if not _csrf_header_valid(request) and not await _csrf_form_valid(request):
                 return RedirectResponse(url="/login?error=Forbidden+request", status_code=303)
     # Physician-only routes
     if path.startswith("/physician"):

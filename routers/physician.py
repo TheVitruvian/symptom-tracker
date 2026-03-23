@@ -23,6 +23,7 @@ from security import (
     _is_share_code_allowed,
     _send_reset_email,
     _send_username_reminder_email,
+    _external_base_url,
 )
 from ui import _calc_age
 from email_validation import is_semantic_email, normalize_email
@@ -369,7 +370,7 @@ def physician_forgot_password_post(request: Request, email: str = Form("")):
                 (_hash_token(token), physician["id"], expires_at),
             )
             conn.commit()
-        base = str(request.base_url).rstrip("/")
+        base = _external_base_url(request)
         reset_url = f"{base}/physician/reset-password?token={token}"
         _send_reset_email(email_clean, reset_url)
     return JSONResponse({"ok": True, "toast": _TOAST})

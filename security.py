@@ -10,12 +10,11 @@ from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from time import time
 from typing import Optional
-from urllib.parse import parse_qs
-
 import requests
 from fastapi import Request
 
 from config import (
+    APP_BASE_URL,
     SESSION_COOKIE_NAME,
     SESSION_TTL_SECONDS,
     CSRF_COOKIE_NAME,
@@ -174,6 +173,13 @@ def _password_meets_complexity(password: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _external_base_url(request: Request) -> str:
+    """Return a trusted external base URL for links sent outside the app."""
+    if APP_BASE_URL:
+        return APP_BASE_URL
+    return f"{request.url.scheme}://{request.url.netloc}"
+
+
 def _request_origin_host(request: Request) -> str:
     header = request.headers.get("origin") or request.headers.get("referer") or ""
     if not header:
@@ -212,25 +218,22 @@ def _csrf_header_valid(request: Request) -> bool:
     return bool(cookie_token) and hmac.compare_digest(cookie_token, header_token)
 
 
-def _csrf_query_valid(request: Request) -> bool:
-    """Check CSRF token submitted as a query parameter (used by multipart form POSTs)."""
-    cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
-    query_token = request.query_params.get("_csrf", "")
-    return bool(cookie_token) and hmac.compare_digest(cookie_token, query_token)
-
-
 async def _csrf_form_valid(request: Request) -> bool:
-    """Check CSRF token in a hidden form field (used by regular url-encoded form POSTs).
-    Starlette caches the body after first read, so route handlers can still call request.form()."""
+    """Check CSRF token in a hidden form field for standard and multipart form posts."""
     content_type = request.headers.get("content-type", "")
-    if "application/x-www-form-urlencoded" not in content_type:
+    if (
+        "application/x-www-form-urlencoded" not in content_type
+        and "multipart/form-data" not in content_type
+    ):
         return False
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
     if not cookie_token:
         return False
-    body = await request.body()
-    params = parse_qs(body.decode("utf-8", errors="ignore"), keep_blank_values=True)
-    form_token = params.get("_csrf", [""])[0]
+    try:
+        form = await request.form()
+    except Exception:
+        return False
+    form_token = str(form.get("_csrf", ""))
     return bool(form_token) and hmac.compare_digest(cookie_token, form_token)
 
 

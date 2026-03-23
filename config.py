@@ -3,10 +3,12 @@ import secrets
 from contextvars import ContextVar
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Optional
 
 DB_PATH = os.environ.get("DB_PATH", "symptoms.db")
 SECRET_KEY_PATH = Path(".app_secret_key")
+APP_ENV_PATH = Path(".env")
 SESSION_TTL_SECONDS = 60 * 60 * 8   # 8 hours
 INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000  # 30 minutes
 SESSION_COOKIE_NAME = "profile_session"
@@ -26,6 +28,30 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 PUBLIC_PATHS = {"/", "/login", "/signup", "/logout", "/forgot-password", "/forgot-username", "/reset-password", "/verify-email", "/api/check-username", "/api/check-email"}
 RESET_TOKEN_TTL_SECONDS = 3600  # 1 hour
 VERIFICATION_TOKEN_TTL_SECONDS = 86400  # 24 hours
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "").strip().rstrip("/")
+
+
+def _parse_allowed_hosts(raw: str) -> list[str]:
+    hosts: list[str] = []
+    for item in raw.split(","):
+        host = item.strip().lower()
+        if host:
+            hosts.append(host)
+    return hosts
+
+
+def _allowed_hosts() -> list[str]:
+    raw = os.environ.get("ALLOWED_HOSTS", "").strip()
+    if raw:
+        return _parse_allowed_hosts(raw)
+    if APP_BASE_URL:
+        parsed = urlsplit(APP_BASE_URL)
+        if parsed.netloc:
+            return [parsed.netloc.lower()]
+    return ["localhost", "127.0.0.1", "testserver"]
+
+
+ALLOWED_HOSTS = _allowed_hosts()
 
 FREQ_LABELS: dict[str, str] = {
     "once_daily":  "Once daily",
@@ -85,6 +111,7 @@ def _load_secret_key() -> str:
     if env_key:
         return env_key
     if SECRET_KEY_PATH.exists():
+        os.chmod(SECRET_KEY_PATH, 0o600)
         return SECRET_KEY_PATH.read_text(encoding="utf-8").strip()
     key = secrets.token_hex(32)
     # Write with owner-only permissions (rw-------) so the key isn't world-readable
@@ -95,3 +122,9 @@ def _load_secret_key() -> str:
 
 
 SECRET_KEY = _load_secret_key()
+
+if APP_ENV_PATH.exists():
+    try:
+        os.chmod(APP_ENV_PATH, 0o600)
+    except OSError:
+        pass

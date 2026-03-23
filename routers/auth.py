@@ -26,6 +26,7 @@ from security import (
     _audit_log,
     _password_meets_complexity,
     _send_username_reminder_email,
+    _external_base_url,
 )
 from ui import PAGE_STYLE
 from email_validation import is_semantic_email, normalize_email
@@ -173,7 +174,7 @@ def signup_post(
                 (_hash_token(verify_token), new_user_id, verify_expires),
             )
             conn.commit()
-        base = str(request.base_url).rstrip("/")
+        base = _external_base_url(request)
         verify_url = f"{base}/verify-email?token={verify_token}"
         _send_verification_email(email_clean, verify_url)
     _audit_log("signup", username=username.strip(), ip_address=ip)
@@ -321,7 +322,7 @@ def forgot_password_post(request: Request, email: str = Form("")):
                     (_hash_token(token), patient["id"], expires_at),
                 )
                 conn.commit()
-            base = str(request.base_url).rstrip("/")
+            base = _external_base_url(request)
             reset_url = f"{base}/reset-password?token={token}"
             _send_reset_email(email, reset_url)
     # Always show the same message regardless of outcome to prevent email enumeration

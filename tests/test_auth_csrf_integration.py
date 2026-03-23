@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from fastapi.testclient import TestClient
+from security import _hash_password
 
 
 class AuthCsrfIntegrationTests(unittest.TestCase):
@@ -92,6 +93,40 @@ class AuthCsrfIntegrationTests(unittest.TestCase):
         payload = with_csrf.json()
         self.assertTrue(payload.get("ok"))
         self.assertEqual(payload["schedule"]["name"], "Ibuprofen")
+
+    def test_multipart_form_requires_body_csrf_not_query_token(self):
+        self._signup()
+        csrf = self.client.cookies.get("csrf_token")
+        self.assertTrue(csrf)
+
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\rIHDR"
+            b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00"
+            b"\x90wS\xde"
+            b"\x00\x00\x00\x0cIDAT\x08\x99c`\x00\x00\x00\x02\x00\x01"
+            b"\xe2!\xbc3"
+            b"\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+
+        without_csrf = self.client.post(
+            "/profile/photo",
+            headers={"origin": "http://testserver"},
+            files={"photo": ("tiny.png", png, "image/png")},
+            follow_redirects=False,
+        )
+        self.assertEqual(without_csrf.status_code, 303)
+        self.assertIn("/login?error=Forbidden+request", without_csrf.headers.get("location", ""))
+
+        with_body_csrf = self.client.post(
+            "/profile/photo",
+            headers={"origin": "http://testserver"},
+            data={"_csrf": csrf},
+            files={"photo": ("tiny.png", png, "image/png")},
+        )
+        self.assertEqual(with_body_csrf.status_code, 200)
+        payload = with_body_csrf.json()
+        self.assertTrue(payload.get("ok"))
 
     def test_dose_timestamp_round_trips_via_utc_storage(self):
         """Dose taken_at is stored as UTC and the API returns it in client-local time.
@@ -214,6 +249,62 @@ class AuthCsrfIntegrationTests(unittest.TestCase):
         after_restore = self.client.get("/api/symptoms")
         self.assertEqual(after_restore.status_code, 200)
         self.assertTrue(any(s["id"] == symptom_id for s in after_restore.json()["symptoms"]))
+
+    def test_untrusted_host_header_is_rejected(self):
+        resp = self.client.get("/", headers={"host": "evil.example"})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_physician_profile_view_hides_patient_only_fields(self):
+        self._signup()
+        self.client.cookies.clear()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            patient = conn.execute(
+                "SELECT id, share_code FROM user_profile WHERE username = ?",
+                ("alice",),
+            ).fetchone()
+            conn.execute(
+                "INSERT INTO physicians (username, email, password_hash) VALUES (?, ?, ?)",
+                ("drbob", "drbob@example.com", _hash_password("DoctorPass123")),
+            )
+            physician_id = conn.execute(
+                "SELECT id FROM physicians WHERE username = ?",
+                ("drbob",),
+            ).fetchone()["id"]
+            conn.execute(
+                "INSERT INTO physician_patients (physician_id, patient_id) VALUES (?, ?)",
+                (physician_id, patient["id"]),
+            )
+            conn.commit()
+
+        login = self.client.post(
+            "/physician/login",
+            headers={"origin": "http://testserver"},
+            data={"username": "drbob", "password": "DoctorPass123"},
+        )
+        self.assertEqual(login.status_code, 200)
+        self.assertTrue(login.json().get("ok"))
+
+        switched = self.client.post(
+            f"/physician/switch/{patient['id']}",
+            headers={"origin": "http://testserver"},
+        )
+        self.assertEqual(switched.status_code, 200)
+        self.assertTrue(switched.json().get("ok"))
+
+        profile_api = self.client.get("/api/profile")
+        self.assertEqual(profile_api.status_code, 200)
+        payload = profile_api.json()
+        self.assertNotIn("share_code", payload)
+        self.assertNotIn("email", payload)
+        self.assertNotIn("password_hash", payload)
+
+        profile_page = self.client.get("/profile")
+        self.assertEqual(profile_page.status_code, 200)
+        body = profile_page.text
+        self.assertNotIn(patient["share_code"], body)
+        self.assertNotIn("Physician Access", body)
 
 
 if __name__ == "__main__":

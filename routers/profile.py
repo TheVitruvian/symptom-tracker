@@ -14,13 +14,31 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from config import _current_user_id, _physician_ctx, _from_utc_storage, UPLOAD_DIR, MAX_PHOTO_SIZE, FREQ_LABELS, VERIFICATION_TOKEN_TTL_SECONDS
 from db import get_db
-from security import _hash_password, _hash_token, _verify_password, _set_session_cookie, _send_verification_email
+from security import (
+    _hash_password,
+    _hash_token,
+    _verify_password,
+    _set_session_cookie,
+    _send_verification_email,
+    _external_base_url,
+)
 from ui import PAGE_STYLE, _nav_bar, _calc_age
 from email_validation import is_semantic_email, normalize_email
 
 router = APIRouter()
 
 _ALLOWED_PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
+
+
+def _profile_payload(row, physician_view: bool) -> dict:
+    if row is None:
+        return {"name": "", "dob": "", "conditions": "", "medications": ""}
+    data = dict(row)
+    allowed = {"id", "name", "dob", "conditions", "medications", "photo_ext"}
+    if physician_view:
+        return {key: data.get(key, "") for key in allowed}
+    data.pop("password_hash", None)
+    return data
 
 
 def _detect_image_ext(data: bytes) -> Optional[str]:
@@ -52,13 +70,10 @@ async def _read_limited_upload(upload: UploadFile, max_bytes: int) -> Optional[b
 @router.get("/api/profile")
 def api_profile_get():
     uid = _current_user_id.get()
+    physician_view = _physician_ctx.get() is not None
     with get_db() as conn:
         row = conn.execute("SELECT * FROM user_profile WHERE id = ?", (uid,)).fetchone()
-    if row is None:
-        return JSONResponse({"name": "", "dob": "", "conditions": "", "medications": ""})
-    data = dict(row)
-    data.pop("password_hash", None)
-    return JSONResponse(data)
+    return JSONResponse(_profile_payload(row, physician_view))
 
 
 @router.post("/api/profile")
@@ -229,32 +244,38 @@ def _physician_access_card(share_code: str, linked_physicians, access_log) -> st
 @router.get("/profile", response_class=HTMLResponse)
 def profile_get():
     uid = _current_user_id.get()
+    is_physician_view = _physician_ctx.get() is not None
     with get_db() as conn:
         row = conn.execute("SELECT * FROM user_profile WHERE id = ?", (uid,)).fetchone()
         sched_text = _medications_from_schedules(conn, uid)
-        linked_physicians = conn.execute(
-            "SELECT p.id, p.username FROM physicians p"
-            " JOIN physician_patients pp ON pp.physician_id = p.id"
-            " WHERE pp.patient_id = ? ORDER BY p.username",
-            (uid,),
-        ).fetchall()
-        access_log = conn.execute(
-            "SELECT p.username, al.accessed_at"
-            " FROM physician_access_log al"
-            " JOIN physicians p ON p.id = al.physician_id"
-            " WHERE al.patient_id = ?"
-            " ORDER BY al.accessed_at DESC LIMIT 50",
-            (uid,),
-        ).fetchall()
-    p = dict(row) if row else {"name": "", "dob": "", "conditions": "", "medications": "", "photo_ext": "", "share_code": "", "email": "", "email_verified": 0}
+        linked_physicians = []
+        access_log = []
+        if not is_physician_view:
+            linked_physicians = conn.execute(
+                "SELECT p.id, p.username FROM physicians p"
+                " JOIN physician_patients pp ON pp.physician_id = p.id"
+                " WHERE pp.patient_id = ? ORDER BY p.username",
+                (uid,),
+            ).fetchall()
+            access_log = conn.execute(
+                "SELECT p.username, al.accessed_at"
+                " FROM physician_access_log al"
+                " JOIN physicians p ON p.id = al.physician_id"
+                " WHERE al.patient_id = ?"
+                " ORDER BY al.accessed_at DESC LIMIT 50",
+                (uid,),
+            ).fetchall()
+    p = _profile_payload(row, is_physician_view)
+    p.setdefault("email", "")
+    p.setdefault("email_verified", 0)
     if sched_text:
         p["medications"] = sched_text
     age = _calc_age(p["dob"])
     age_str = f" &nbsp;<span style='color:#666;font-size:13px;'>({age} years old)</span>" if age is not None else ""
-    is_physician_view = _physician_ctx.get() is not None
     if is_physician_view:
         email_field_html = ""
         change_password_html = ""
+        physician_access_html = ""
     else:
         _ev = html.escape(p.get("email", ""))
         email_field_html = (
@@ -287,6 +308,7 @@ def profile_get():
         <button type="submit" class="btn-primary">Change Password</button>
       </form>
     </details>"""
+        physician_access_html = _physician_access_card(p.get("share_code", ""), linked_physicians, access_log)
     email_val = p.get("email", "")
     if email_val and not p.get("email_verified"):
         verify_banner = (
@@ -378,7 +400,7 @@ def profile_get():
       </div>
       <button type="submit" class="btn-primary">Save Profile</button>
     </form>
-    {_physician_access_card(p.get("share_code", ""), linked_physicians, access_log)}
+    {physician_access_html}
     {change_password_html}
   </div>
 </body>
@@ -437,7 +459,7 @@ def profile_update(
                 (_hash_token(verify_token), uid, verify_expires),
             )
             conn.commit()
-        base = str(request.base_url).rstrip("/")
+        base = _external_base_url(request)
         verify_url = f"{base}/verify-email?token={verify_token}"
         _send_verification_email(email_clean, verify_url)
     return JSONResponse({"ok": True, "toast": "Profile saved"})
@@ -460,7 +482,7 @@ def profile_resend_verification(request: Request):
             (_hash_token(verify_token), uid, verify_expires),
         )
         conn.commit()
-    base = str(request.base_url).rstrip("/")
+    base = _external_base_url(request)
     verify_url = f"{base}/verify-email?token={verify_token}"
     _send_verification_email(email_clean, verify_url)
     return JSONResponse({"ok": True, "toast": "Verification email sent"})
